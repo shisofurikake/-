@@ -91,9 +91,7 @@ function newId() {
 function todayString() {
   const now = new Date();
   const offset = now.getTimezoneOffset();
-  return new Date(now.getTime() - offset * 60_000)
-    .toISOString()
-    .slice(0, 10);
+  return new Date(now.getTime() - offset * 60_000).toISOString().slice(0, 10);
 }
 
 function yen(value: number) {
@@ -116,6 +114,53 @@ function typeLabel(type: PlayType) {
 
 function unitLabel(type: PlayType) {
   return type === "slot" ? "枚" : "玉";
+}
+
+function monthLabel(month: string) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  return `${year}年${monthNumber}月`;
+}
+
+function shiftMonth(month: string, amount: number) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  const shifted = new Date(year, monthNumber - 1 + amount, 1);
+  return `${shifted.getFullYear()}-${String(shifted.getMonth() + 1).padStart(
+    2,
+    "0",
+  )}`;
+}
+
+function calendarDates(month: string) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  const firstWeekday = new Date(year, monthNumber - 1, 1).getDay();
+  const lastDate = new Date(year, monthNumber, 0).getDate();
+  const dates: Array<string | null> = Array(firstWeekday).fill(null);
+
+  for (let day = 1; day <= lastDate; day += 1) {
+    dates.push(`${month}-${String(day).padStart(2, "0")}`);
+  }
+
+  while (dates.length % 7 !== 0) {
+    dates.push(null);
+  }
+
+  return dates;
+}
+
+function compactSignedYen(value: number) {
+  const rounded = Math.round(value);
+  const sign = rounded >= 0 ? "+" : "-";
+  const absolute = Math.abs(rounded);
+
+  if (absolute >= 10_000) {
+    const tenThousands = absolute / 10_000;
+    const display = Number.isInteger(tenThousands)
+      ? tenThousands.toString()
+      : tenThousands.toFixed(1);
+    return `${sign}${display}万`;
+  }
+
+  return `${sign}${absolute.toLocaleString()}`;
 }
 
 function createEmptySession(): NoriuchiSession {
@@ -223,18 +268,14 @@ function memberFinalUnits(
   }, 0);
 }
 
-function hasPreviousSameTypePlay(
-  plays: PlayEntry[],
-  currentIndex: number,
-) {
+function hasPreviousSameTypePlay(plays: PlayEntry[], currentIndex: number) {
   const currentPlay = plays[currentIndex];
 
   return plays
     .slice(0, currentIndex)
     .some(
       (play) =>
-        play.member === currentPlay.member &&
-        play.type === currentPlay.type,
+        play.member === currentPlay.member && play.type === currentPlay.type,
     );
 }
 
@@ -244,9 +285,7 @@ function memberSentUnits(
   type: PlayType,
 ) {
   return session.transfers
-    .filter(
-      (transfer) => transfer.from === member && transfer.type === type,
-    )
+    .filter((transfer) => transfer.from === member && transfer.type === type)
     .reduce((sum, transfer) => sum + transfer.units, 0);
 }
 
@@ -324,11 +363,7 @@ function calculateSession(session: NoriuchiSession) {
 function validateSession(session: NoriuchiSession, confirmMode: boolean) {
   if (!session.date) return "日付を入力してね";
 
-  if (
-    session.transfers.some(
-      (transfer) => transfer.from === transfer.to,
-    )
-  ) {
+  if (session.transfers.some((transfer) => transfer.from === transfer.to)) {
     return "同じ人同士の受け渡しは登録できません";
   }
 
@@ -352,6 +387,10 @@ export default function Home() {
   const [form, setForm] = useState<NoriuchiSession>(createEmptySession);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [historyMonth, setHistoryMonth] = useState(todayString().slice(0, 7));
+  const [selectedHistoryDate, setSelectedHistoryDate] = useState<string | null>(
+    null,
+  );
 
   useEffect(() => {
     let active = true;
@@ -434,6 +473,20 @@ export default function Home() {
     (sum, session) => sum + calculateSession(session).totalProfit,
     0,
   );
+
+  const historyMonthSessions = sessions.filter((session) =>
+    session.date.startsWith(historyMonth),
+  );
+  const historyMonthConfirmedSessions = historyMonthSessions.filter(
+    (session) => session.status === "confirmed",
+  );
+  const historyMonthProfit = historyMonthConfirmedSessions.reduce(
+    (sum, session) => sum + calculateSession(session).totalProfit,
+    0,
+  );
+  const selectedDateSessions = selectedHistoryDate
+    ? sessions.filter((session) => session.date === selectedHistoryDate)
+    : [];
 
   const draftCount = sessions.filter(
     (session) => session.status === "draft",
@@ -537,9 +590,7 @@ export default function Home() {
 
     try {
       await deleteSessionFromSupabase(id);
-      setSessions((current) =>
-        current.filter((session) => session.id !== id),
-      );
+      setSessions((current) => current.filter((session) => session.id !== id));
     } catch (error) {
       console.error(error);
       alert("削除に失敗しました");
@@ -549,7 +600,7 @@ export default function Home() {
   function updatePlay(
     id: string,
     field: keyof Omit<PlayEntry, "id">,
-     value: string | number | boolean
+    value: string | number | boolean,
   ) {
     setForm((current) => ({
       ...current,
@@ -605,14 +656,12 @@ export default function Home() {
   function updateTransfer(
     id: string,
     field: keyof Omit<Transfer, "id">,
-    value: string | number | boolean,
+    value: string | number,
   ) {
     setForm((current) => ({
       ...current,
       transfers: current.transfers.map((transfer) =>
-        transfer.id === id
-          ? { ...transfer, [field]: value }
-          : transfer,
+        transfer.id === id ? { ...transfer, [field]: value } : transfer,
       ),
     }));
   }
@@ -620,9 +669,7 @@ export default function Home() {
   function removeTransfer(id: string) {
     setForm((current) => ({
       ...current,
-      transfers: current.transfers.filter(
-        (transfer) => transfer.id !== id,
-      ),
+      transfers: current.transfers.filter((transfer) => transfer.id !== id),
     }));
   }
 
@@ -651,9 +698,7 @@ export default function Home() {
     setForm((current) => ({
       ...current,
       exchanges: current.exchanges.map((exchange) =>
-        exchange.id === id
-          ? { ...exchange, [field]: value }
-          : exchange,
+        exchange.id === id ? { ...exchange, [field]: value } : exchange,
       ),
     }));
   }
@@ -678,9 +723,7 @@ export default function Home() {
   function removeExchange(id: string) {
     setForm((current) => ({
       ...current,
-      exchanges: current.exchanges.filter(
-        (exchange) => exchange.id !== id,
-      ),
+      exchanges: current.exchanges.filter((exchange) => exchange.id !== id),
     }));
   }
 
@@ -690,7 +733,11 @@ export default function Home() {
     <main className="min-h-screen bg-zinc-950 text-white">
       <div className="mx-auto min-h-screen max-w-md px-5 pb-28 pt-7">
         <header className="mb-7">
-          <button type="button" onClick={() => setPage("home")} className="text-left">
+          <button
+            type="button"
+            onClick={() => setPage("home")}
+            className="text-left"
+          >
             <h1 className="text-3xl font-black tracking-tight text-amber-400">
               🎰 ノリ打ちノート
             </h1>
@@ -789,14 +836,15 @@ export default function Home() {
               <div className="mb-4 flex items-center justify-between">
                 <div>
                   <h3 className="text-xl font-black">遊技内容</h3>
-                  <p className="text-sm text-zinc-400">
-                    台移動するたびに追加
-                  </p>
+                  <p className="text-sm text-zinc-400">台移動するたびに追加</p>
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
-                <AddButton label="＋ スロット" onClick={() => addPlay("slot")} />
+                <AddButton
+                  label="＋ スロット"
+                  onClick={() => addPlay("slot")}
+                />
                 <AddButton
                   label="＋ パチンコ"
                   onClick={() => addPlay("pachinko")}
@@ -831,11 +879,7 @@ export default function Home() {
                             label: member,
                           }))}
                           onChange={(value) =>
-                            updatePlay(
-                              play.id,
-                              "member",
-                              value as MemberName,
-                            )
+                            updatePlay(play.id, "member", value as MemberName)
                           }
                         />
 
@@ -866,34 +910,35 @@ export default function Home() {
                           }
                         />
 
-
-<label
-  className={`block w-full rounded-xl border px-4 py-3 text-left text-sm font-bold ${
-    play.usesPreviousUnits
-      ? "border-amber-400 bg-amber-400/20 text-amber-200"
-      : hasPreviousSameTypePlay(form.plays, index)
-        ? "border-zinc-700 bg-zinc-900 text-zinc-200"
-        : "cursor-not-allowed border-zinc-800 bg-zinc-900/50 text-zinc-600"
-  }`}
->
-  <span className="flex items-center gap-3">
-    <input
-      type="checkbox"
-      checked={play.usesPreviousUnits ?? false}
-      disabled={!hasPreviousSameTypePlay(form.plays, index)}
-      onChange={(event) =>
-        updatePlay(
-          play.id,
-          "usesPreviousUnits",
-          event.target.checked,
-        )
-      }
-      className="h-5 w-5 accent-amber-400"
-    />
-    前の台の持ち
-    {play.type === "slot" ? "メダル" : "玉"}を使用
-  </span>
-</label>
+                        <label
+                          className={`w-full rounded-xl border px-4 py-3 text-left text-sm font-bold ${
+                            play.usesPreviousUnits
+                              ? "border-amber-400 bg-amber-400/20 text-amber-200"
+                              : hasPreviousSameTypePlay(form.plays, index)
+                                ? "border-zinc-700 bg-zinc-900 text-zinc-200"
+                                : "cursor-not-allowed border-zinc-800 bg-zinc-900/50 text-zinc-600"
+                          }`}
+                        >
+                          <span className="flex items-center gap-3">
+                            <input
+                              type="checkbox"
+                              checked={play.usesPreviousUnits ?? false}
+                              disabled={
+                                !hasPreviousSameTypePlay(form.plays, index)
+                              }
+                              onChange={(event) =>
+                                updatePlay(
+                                  play.id,
+                                  "usesPreviousUnits",
+                                  event.target.checked,
+                                )
+                              }
+                              className="h-5 w-5 accent-amber-400"
+                            />
+                            前の台の持ち
+                            {play.type === "slot" ? "メダル" : "玉"}を使用
+                          </span>
+                        </label>
 
                         <NumberInput
                           label={`1,000円あたりの貸出${unitLabel(play.type)}数`}
@@ -921,9 +966,7 @@ export default function Home() {
 
             <Card>
               <h3 className="text-xl font-black">受け渡し</h3>
-              <p className="text-sm text-zinc-400">
-                誰から誰へ渡したかを記録
-              </p>
+              <p className="text-sm text-zinc-400">誰から誰へ渡したかを記録</p>
 
               <div className="mt-4 grid grid-cols-2 gap-3">
                 <AddButton
@@ -941,7 +984,10 @@ export default function Home() {
               ) : (
                 <div className="mt-4 space-y-4">
                   {form.transfers.map((transfer) => (
-                    <div key={transfer.id} className="rounded-2xl bg-zinc-950 p-4">
+                    <div
+                      key={transfer.id}
+                      className="rounded-2xl bg-zinc-950 p-4"
+                    >
                       <div className="mb-3 flex items-center justify-between">
                         <p className="font-bold">{typeLabel(transfer.type)}</p>
                         <button
@@ -1025,9 +1071,14 @@ export default function Home() {
               ) : (
                 <div className="mt-4 space-y-4">
                   {form.exchanges.map((exchange) => (
-                    <div key={exchange.id} className="rounded-2xl bg-zinc-950 p-4">
+                    <div
+                      key={exchange.id}
+                      className="rounded-2xl bg-zinc-950 p-4"
+                    >
                       <div className="mb-4 flex items-center justify-between">
-                        <p className="font-black">{typeLabel(exchange.type)}交換</p>
+                        <p className="font-black">
+                          {typeLabel(exchange.type)}交換
+                        </p>
                         <button
                           type="button"
                           onClick={() => removeExchange(exchange.id)}
@@ -1120,7 +1171,10 @@ export default function Home() {
               </h3>
 
               <div className="mt-4 space-y-2">
-                <ResultRow label="総投資" value={yen(preview.totalInvestment)} />
+                <ResultRow
+                  label="総投資"
+                  value={yen(preview.totalInvestment)}
+                />
                 <ResultRow
                   label="交換金額"
                   value={yen(preview.totalExchangeYen)}
@@ -1135,14 +1189,15 @@ export default function Home() {
 
               <div className="mt-5 space-y-3 border-t border-amber-500/20 pt-5">
                 {preview.memberResults.map((result) => (
-                  <div key={result.member} className="rounded-2xl bg-zinc-950/70 p-4">
+                  <div
+                    key={result.member}
+                    className="rounded-2xl bg-zinc-950/70 p-4"
+                  >
                     <div className="flex items-center justify-between font-black">
                       <span>{result.member}</span>
                       <span>{yen(result.receipt)}</span>
                     </div>
-                    <p className="mt-1 text-xs text-zinc-400">
-                      受け取り予定
-                    </p>
+                    <p className="mt-1 text-xs text-zinc-400">受け取り予定</p>
                     <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
                       <div className="rounded-xl bg-zinc-900 p-2">
                         差枚 {units(result.netCoins, "slot")}
@@ -1176,128 +1231,274 @@ export default function Home() {
         )}
 
         {page === "history" && (
-          <section>
+          <section className="space-y-5">
             <div className="mb-5">
               <h2 className="text-2xl font-black">履歴</h2>
               <p className="mt-1 text-sm text-zinc-400">
-                一時保存した記録もここから編集できます
+                日付を選ぶと、その日の詳しい記録を確認できます
               </p>
             </div>
 
             {sessions.length === 0 ? (
               <EmptyState text="まだ記録がありません" />
             ) : (
-              <div className="space-y-4">
-                {sessions.map((session) => {
-                  const result = calculateSession(session);
-
-                  return (
-                    <details
-                      key={session.id}
-                      className="rounded-3xl border border-zinc-800 bg-zinc-900 p-5"
+              <>
+                <div className="rounded-3xl border border-zinc-800 bg-zinc-900 p-5">
+                  <div className="flex items-center justify-between">
+                    <button
+                      type="button"
+                      aria-label="前の月"
+                      onClick={() => {
+                        setHistoryMonth((current) => shiftMonth(current, -1));
+                        setSelectedHistoryDate(null);
+                      }}
+                      className="rounded-xl bg-zinc-800 px-4 py-2 text-xl font-black"
                     >
-                      <summary className="cursor-pointer list-none">
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <p className="font-black">
-                                {session.hall || "ホール未入力"}
-                              </p>
-                              <StatusBadge status={session.status} />
-                            </div>
-                            <p className="mt-1 text-sm text-zinc-400">
-                              {session.date}・遊技 {session.plays.length}件
-                            </p>
-                          </div>
+                      ‹
+                    </button>
+                    <h3 className="text-lg font-black">
+                      {monthLabel(historyMonth)}
+                    </h3>
+                    <button
+                      type="button"
+                      aria-label="次の月"
+                      onClick={() => {
+                        setHistoryMonth((current) => shiftMonth(current, 1));
+                        setSelectedHistoryDate(null);
+                      }}
+                      className="rounded-xl bg-zinc-800 px-4 py-2 text-xl font-black"
+                    >
+                      ›
+                    </button>
+                  </div>
 
-                          {session.status === "confirmed" ? (
-                            <p
-                              className={`font-black ${
-                                result.totalProfit >= 0
+                  <div className="mt-5 rounded-2xl bg-zinc-950 p-4">
+                    <p className="text-sm text-zinc-400">当月の累計収支</p>
+                    <p
+                      className={`mt-1 text-3xl font-black ${
+                        historyMonthProfit >= 0
+                          ? "text-emerald-400"
+                          : "text-rose-400"
+                      }`}
+                    >
+                      {signedYen(historyMonthProfit)}
+                    </p>
+                    <p className="mt-2 text-xs text-zinc-500">
+                      確定済み {historyMonthConfirmedSessions.length}件
+                      {historyMonthSessions.length >
+                        historyMonthConfirmedSessions.length &&
+                        `・編集中 ${
+                          historyMonthSessions.length -
+                          historyMonthConfirmedSessions.length
+                        }件`}
+                    </p>
+                  </div>
+
+                  <div className="mt-5 grid grid-cols-7 gap-1 text-center text-xs font-bold text-zinc-500">
+                    {["日", "月", "火", "水", "木", "金", "土"].map(
+                      (weekday) => (
+                        <div key={weekday} className="py-1">
+                          {weekday}
+                        </div>
+                      ),
+                    )}
+                  </div>
+
+                  <div className="mt-1 grid grid-cols-7 gap-1">
+                    {calendarDates(historyMonth).map((date, index) => {
+                      if (!date) {
+                        return <div key={`empty-${index}`} />;
+                      }
+
+                      const daySessions = historyMonthSessions.filter(
+                        (session) => session.date === date,
+                      );
+                      const confirmedDaySessions = daySessions.filter(
+                        (session) => session.status === "confirmed",
+                      );
+                      const dayProfit = confirmedDaySessions.reduce(
+                        (sum, session) =>
+                          sum + calculateSession(session).totalProfit,
+                        0,
+                      );
+                      const hasDraft = daySessions.some(
+                        (session) => session.status === "draft",
+                      );
+                      const selected = selectedHistoryDate === date;
+
+                      return (
+                        <button
+                          key={date}
+                          type="button"
+                          disabled={daySessions.length === 0}
+                          onClick={() => setSelectedHistoryDate(date)}
+                          className={`flex min-h-16 min-w-0 flex-col items-center rounded-xl border px-0.5 py-2 ${
+                            selected
+                              ? "border-amber-400 bg-amber-400/15"
+                              : daySessions.length > 0
+                                ? "border-zinc-700 bg-zinc-950"
+                                : "border-transparent text-zinc-600"
+                          }`}
+                        >
+                          <span className="text-xs font-bold">
+                            {Number(date.slice(-2))}
+                          </span>
+                          {confirmedDaySessions.length > 0 && (
+                            <span
+                              className={`mt-1 max-w-full text-[10px] font-black tracking-tight ${
+                                dayProfit >= 0
                                   ? "text-emerald-400"
                                   : "text-rose-400"
                               }`}
                             >
-                              {signedYen(result.totalProfit)}
-                            </p>
-                          ) : (
-                            <p className="font-bold text-amber-300">編集中</p>
+                              {compactSignedYen(dayProfit)}
+                            </span>
                           )}
-                        </div>
-                      </summary>
+                          {hasDraft && (
+                            <span className="mt-1 text-[9px] font-bold text-amber-300">
+                              編集中
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
 
-                      <div className="mt-5 border-t border-zinc-800 pt-5">
-                        <div className="space-y-2">
-                          <ResultRow
-                            label="総投資"
-                            value={yen(result.totalInvestment)}
-                          />
-                          <ResultRow
-                            label="交換金額"
-                            value={yen(result.totalExchangeYen)}
-                          />
-                          <ResultRow
-                            label="全体収支"
-                            value={signedYen(result.totalProfit)}
-                            positive={result.totalProfit >= 0}
-                          />
-                          <ResultRow label="端数" value={yen(result.remainder)} />
-                        </div>
+                {selectedHistoryDate ? (
+                  <div className="space-y-4">
+                    <h3 className="text-lg font-black">
+                      {Number(selectedHistoryDate.slice(5, 7))}月
+                      {Number(selectedHistoryDate.slice(8, 10))}日の記録
+                    </h3>
 
-                        {session.status === "confirmed" && (
-                          <div className="mt-5 space-y-3">
-                            {result.memberResults.map((memberResult) => (
-                              <div
-                                key={memberResult.member}
-                                className="rounded-2xl bg-zinc-950 p-4"
-                              >
-                                <div className="flex justify-between font-black">
-                                  <span>{memberResult.member}</span>
-                                  <span>{yen(memberResult.receipt)}</span>
+                    {selectedDateSessions.map((session) => {
+                      const result = calculateSession(session);
+
+                      return (
+                        <details
+                          key={session.id}
+                          open
+                          className="rounded-3xl border border-zinc-800 bg-zinc-900 p-5"
+                        >
+                          <summary className="cursor-pointer list-none">
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <p className="font-black">
+                                    {session.hall || "ホール未入力"}
+                                  </p>
+                                  <StatusBadge status={session.status} />
                                 </div>
-                                <p className="mt-1 text-xs text-zinc-400">
-                                  受け取り
+                                <p className="mt-1 text-sm text-zinc-400">
+                                  遊技 {session.plays.length}件
                                 </p>
-                                <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                                  <div className="rounded-xl bg-zinc-900 p-2">
-                                    差枚 {units(memberResult.netCoins, "slot")}
-                                  </div>
-                                  <div className="rounded-xl bg-zinc-900 p-2">
-                                    差玉 {units(memberResult.netBalls, "pachinko")}
-                                  </div>
-                                </div>
                               </div>
-                            ))}
+
+                              {session.status === "confirmed" ? (
+                                <p
+                                  className={`font-black ${
+                                    result.totalProfit >= 0
+                                      ? "text-emerald-400"
+                                      : "text-rose-400"
+                                  }`}
+                                >
+                                  {signedYen(result.totalProfit)}
+                                </p>
+                              ) : (
+                                <p className="font-bold text-amber-300">
+                                  編集中
+                                </p>
+                              )}
+                            </div>
+                          </summary>
+
+                          <div className="mt-5 border-t border-zinc-800 pt-5">
+                            <div className="space-y-2">
+                              <ResultRow
+                                label="総投資"
+                                value={yen(result.totalInvestment)}
+                              />
+                              <ResultRow
+                                label="交換金額"
+                                value={yen(result.totalExchangeYen)}
+                              />
+                              <ResultRow
+                                label="全体収支"
+                                value={signedYen(result.totalProfit)}
+                                positive={result.totalProfit >= 0}
+                              />
+                              <ResultRow
+                                label="端数"
+                                value={yen(result.remainder)}
+                              />
+                            </div>
+
+                            {session.status === "confirmed" && (
+                              <div className="mt-5 space-y-3">
+                                {result.memberResults.map((memberResult) => (
+                                  <div
+                                    key={memberResult.member}
+                                    className="rounded-2xl bg-zinc-950 p-4"
+                                  >
+                                    <div className="flex justify-between font-black">
+                                      <span>{memberResult.member}</span>
+                                      <span>{yen(memberResult.receipt)}</span>
+                                    </div>
+                                    <p className="mt-1 text-xs text-zinc-400">
+                                      受け取り
+                                    </p>
+                                    <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                                      <div className="rounded-xl bg-zinc-900 p-2">
+                                        差枚{" "}
+                                        {units(memberResult.netCoins, "slot")}
+                                      </div>
+                                      <div className="rounded-xl bg-zinc-900 p-2">
+                                        差玉{" "}
+                                        {units(
+                                          memberResult.netBalls,
+                                          "pachinko",
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            {session.memo && (
+                              <p className="mt-4 rounded-2xl bg-zinc-950 p-4 text-sm text-zinc-300">
+                                {session.memo}
+                              </p>
+                            )}
+
+                            <div className="mt-5 grid grid-cols-2 gap-3">
+                              <button
+                                type="button"
+                                onClick={() => editSession(session)}
+                                className="rounded-xl bg-amber-400 py-3 font-black text-black"
+                              >
+                                編集
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => deleteSession(session.id)}
+                                className="rounded-xl bg-rose-500/10 py-3 font-bold text-rose-300"
+                              >
+                                削除
+                              </button>
+                            </div>
                           </div>
-                        )}
-
-                        {session.memo && (
-                          <p className="mt-4 rounded-2xl bg-zinc-950 p-4 text-sm text-zinc-300">
-                            {session.memo}
-                          </p>
-                        )}
-
-                        <div className="mt-5 grid grid-cols-2 gap-3">
-                          <button
-                            type="button"
-                            onClick={() => editSession(session)}
-                            className="rounded-xl bg-amber-400 py-3 font-black text-black"
-                          >
-                            編集
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => deleteSession(session.id)}
-                            className="rounded-xl bg-rose-500/10 py-3 font-bold text-rose-300"
-                          >
-                            削除
-                          </button>
-                        </div>
-                      </div>
-                    </details>
-                  );
-                })}
-              </div>
+                        </details>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="rounded-2xl border border-dashed border-zinc-700 p-5 text-center text-sm text-zinc-500">
+                    金額または「編集中」がある日をタップすると詳細が表示されます
+                  </p>
+                )}
+              </>
             )}
           </section>
         )}
@@ -1343,8 +1544,14 @@ export default function Home() {
                     </div>
 
                     <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-                      <Stat label="実質差枚" value={units(result.netCoins, "slot")} />
-                      <Stat label="実質差玉" value={units(result.netBalls, "pachinko")} />
+                      <Stat
+                        label="実質差枚"
+                        value={units(result.netCoins, "slot")}
+                      />
+                      <Stat
+                        label="実質差玉"
+                        value={units(result.netBalls, "pachinko")}
+                      />
                       <Stat
                         label="貸したメダル"
                         value={`${Math.round(result.sentCoins).toLocaleString()}枚`}
@@ -1537,13 +1744,7 @@ function StatusBadge({ status }: { status: SessionStatus }) {
   );
 }
 
-function AddButton({
-  label,
-  onClick,
-}: {
-  label: string;
-  onClick: () => void;
-}) {
+function AddButton({ label, onClick }: { label: string; onClick: () => void }) {
   return (
     <button
       type="button"
