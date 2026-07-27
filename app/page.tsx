@@ -868,7 +868,7 @@ export default function Home() {
 
 
 <label
-  className={`w-full rounded-xl border px-4 py-3 text-left text-sm font-bold ${
+  className={`block w-full rounded-xl border px-4 py-3 text-left text-sm font-bold ${
     play.usesPreviousUnits
       ? "border-amber-400 bg-amber-400/20 text-amber-200"
       : hasPreviousSameTypePlay(form.plays, index)
