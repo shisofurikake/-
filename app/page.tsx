@@ -21,6 +21,7 @@ type PlayEntry = {
   machine: string;
   investment: number;
   finalUnits: number;
+  usesPreviousUnits?: boolean;
   lendRate: number;
   memo: string;
 };
@@ -210,9 +211,31 @@ function memberFinalUnits(
   member: MemberName,
   type: PlayType,
 ) {
-  return session.plays
-    .filter((play) => play.member === member && play.type === type)
-    .reduce((sum, play) => sum + play.finalUnits, 0);
+  const memberPlays = session.plays.filter(
+    (play) => play.member === member && play.type === type,
+  );
+
+  return memberPlays.reduce((sum, play, index) => {
+    const nextPlayUsesTheseUnits =
+      memberPlays[index + 1]?.usesPreviousUnits ?? false;
+
+    return sum + (nextPlayUsesTheseUnits ? 0 : play.finalUnits);
+  }, 0);
+}
+
+function hasPreviousSameTypePlay(
+  plays: PlayEntry[],
+  currentIndex: number,
+) {
+  const currentPlay = plays[currentIndex];
+
+  return plays
+    .slice(0, currentIndex)
+    .some(
+      (play) =>
+        play.member === currentPlay.member &&
+        play.type === currentPlay.type,
+    );
 }
 
 function memberSentUnits(
@@ -526,7 +549,7 @@ export default function Home() {
   function updatePlay(
     id: string,
     field: keyof Omit<PlayEntry, "id">,
-    value: string | number,
+     value: string | number | boolean
   ) {
     setForm((current) => ({
       ...current,
@@ -548,6 +571,7 @@ export default function Home() {
           machine: "",
           investment: 0,
           finalUnits: 0,
+          usesPreviousUnits: false,
           lendRate: type === "slot" ? 46 : 250,
           memo: "",
         },
@@ -581,7 +605,7 @@ export default function Home() {
   function updateTransfer(
     id: string,
     field: keyof Omit<Transfer, "id">,
-    value: string | number,
+    value: string | number | boolean,
   ) {
     setForm((current) => ({
       ...current,
@@ -841,6 +865,35 @@ export default function Home() {
                             updatePlay(play.id, "finalUnits", value)
                           }
                         />
+
+
+<label
+  className={`w-full rounded-xl border px-4 py-3 text-left text-sm font-bold ${
+    play.usesPreviousUnits
+      ? "border-amber-400 bg-amber-400/20 text-amber-200"
+      : hasPreviousSameTypePlay(form.plays, index)
+        ? "border-zinc-700 bg-zinc-900 text-zinc-200"
+        : "cursor-not-allowed border-zinc-800 bg-zinc-900/50 text-zinc-600"
+  }`}
+>
+  <span className="flex items-center gap-3">
+    <input
+      type="checkbox"
+      checked={play.usesPreviousUnits ?? false}
+      disabled={!hasPreviousSameTypePlay(form.plays, index)}
+      onChange={(event) =>
+        updatePlay(
+          play.id,
+          "usesPreviousUnits",
+          event.target.checked,
+        )
+      }
+      className="h-5 w-5 accent-amber-400"
+    />
+    前の台の持ち
+    {play.type === "slot" ? "メダル" : "玉"}を使用
+  </span>
+</label>
 
                         <NumberInput
                           label={`1,000円あたりの貸出${unitLabel(play.type)}数`}
