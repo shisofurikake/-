@@ -267,7 +267,7 @@ function calculateSession(session: NoriuchiSession) {
   const memberResults = MEMBERS.map((member) => {
     const investment = memberInvestment(session, member);
     const rawReceipt = investment + equalProfit;
-    const receipt = Math.trunc(rawReceipt / 100) * 100;
+    const receipt = Math.trunc(rawReceipt / 1000) * 1000;
 
     return {
       member,
