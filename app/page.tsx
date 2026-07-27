@@ -10,7 +10,7 @@ import {
 
 const MEMBERS = ["すぎさん", "こうちさん", "こんちゃみ"] as const;
 type MemberName = (typeof MEMBERS)[number];
-type PageName = "home" | "register" | "history" | "analysis";
+type PageName = "home" | "register" | "history" | "detail" | "analysis";
 type SessionStatus = "draft" | "confirmed";
 type PlayType = "slot" | "pachinko";
 
@@ -391,6 +391,7 @@ export default function Home() {
   const [selectedHistoryDate, setSelectedHistoryDate] = useState<string | null>(
     null,
   );
+  const [detailSessionId, setDetailSessionId] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -487,6 +488,9 @@ export default function Home() {
   const selectedDateSessions = selectedHistoryDate
     ? sessions.filter((session) => session.date === selectedHistoryDate)
     : [];
+  const detailSession =
+    sessions.find((session) => session.id === detailSessionId) ?? null;
+  const detailResult = detailSession ? calculateSession(detailSession) : null;
 
   const draftCount = sessions.filter(
     (session) => session.status === "draft",
@@ -1472,6 +1476,23 @@ export default function Home() {
                               </p>
                             )}
 
+                            {session.status === "confirmed" && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setDetailSessionId(session.id);
+                                  setPage("detail");
+                                  window.scrollTo({
+                                    top: 0,
+                                    behavior: "smooth",
+                                  });
+                                }}
+                                className="mt-5 w-full rounded-xl border border-amber-400/50 bg-amber-400/10 py-3 font-black text-amber-300"
+                              >
+                                さらに詳しく見る
+                              </button>
+                            )}
+
                             <div className="mt-5 grid grid-cols-2 gap-3">
                               <button
                                 type="button"
@@ -1499,6 +1520,229 @@ export default function Home() {
                   </p>
                 )}
               </>
+            )}
+          </section>
+        )}
+
+        {page === "detail" && (
+          <section className="space-y-5">
+            <button
+              type="button"
+              onClick={() => setPage("history")}
+              className="font-bold text-amber-300"
+            >
+              ← 履歴に戻る
+            </button>
+
+            {detailSession && detailResult ? (
+              <>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-2xl font-black">記録の詳細</h2>
+                    <StatusBadge status={detailSession.status} />
+                  </div>
+                  <p className="mt-2 text-zinc-400">
+                    {detailSession.date}・{detailSession.hall || "ホール未入力"}
+                  </p>
+                </div>
+
+                <Card>
+                  <h3 className="text-xl font-black">遊技内容</h3>
+                  <div className="space-y-3">
+                    {detailSession.plays.map((play, index) => (
+                      <div
+                        key={play.id}
+                        className="rounded-2xl bg-zinc-950 p-4"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="font-black">
+                              {index + 1}. {typeLabel(play.type)}
+                            </p>
+                            <p className="mt-1 text-sm text-zinc-400">
+                              {play.machine || "機種未入力"}
+                            </p>
+                          </div>
+                          <span className="rounded-full bg-zinc-800 px-3 py-1 text-xs font-bold">
+                            {play.member}
+                          </span>
+                        </div>
+
+                        {play.usesPreviousUnits && (
+                          <p className="mt-3 rounded-xl bg-amber-400/10 px-3 py-2 text-xs font-bold text-amber-300">
+                            前の台の持ち
+                            {play.type === "slot" ? "メダル" : "玉"}を使用
+                          </p>
+                        )}
+
+                        <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                          <Stat label="投資金額" value={yen(play.investment)} />
+                          <Stat
+                            label={`残った${unitLabel(play.type)}数`}
+                            value={`${Math.round(
+                              play.finalUnits,
+                            ).toLocaleString()}${unitLabel(play.type)}`}
+                          />
+                          <Stat
+                            label="貸出レート"
+                            value={`${play.lendRate.toLocaleString()}${unitLabel(
+                              play.type,
+                            )}/1,000円`}
+                          />
+                        </div>
+
+                        {play.memo && (
+                          <p className="mt-3 rounded-xl bg-zinc-900 p-3 text-sm text-zinc-300">
+                            {play.memo}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+
+                <Card>
+                  <h3 className="text-xl font-black">受け渡し</h3>
+                  {detailSession.transfers.length === 0 ? (
+                    <p className="text-sm text-zinc-500">受け渡しなし</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {detailSession.transfers.map((transfer) => (
+                        <div
+                          key={transfer.id}
+                          className="rounded-2xl bg-zinc-950 p-4"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="font-bold">
+                              {transfer.from} → {transfer.to}
+                            </p>
+                            <span className="text-amber-300">
+                              {transfer.units.toLocaleString()}
+                              {unitLabel(transfer.type)}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-xs text-zinc-500">
+                            {typeLabel(transfer.type)}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </Card>
+
+                <Card>
+                  <h3 className="text-xl font-black">交換内容</h3>
+                  {detailSession.exchanges.length === 0 ? (
+                    <p className="text-sm text-zinc-500">交換内容なし</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {detailSession.exchanges.map((exchange) => (
+                        <div
+                          key={exchange.id}
+                          className="rounded-2xl bg-zinc-950 p-4"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="font-black">
+                                {typeLabel(exchange.type)}交換
+                              </p>
+                              <p className="mt-1 text-xs text-zinc-500">
+                                {exchange.members.join("・")}
+                              </p>
+                            </div>
+                            <p className="font-black text-amber-300">
+                              {yen(exchange.yen)}
+                            </p>
+                          </div>
+                          <p className="mt-3 text-sm text-zinc-300">
+                            {exchange.units.toLocaleString()}
+                            {unitLabel(exchange.type)}
+                          </p>
+                          {exchange.memo && (
+                            <p className="mt-3 rounded-xl bg-zinc-900 p-3 text-sm text-zinc-300">
+                              {exchange.memo}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </Card>
+
+                {detailSession.memo && (
+                  <Card>
+                    <h3 className="text-xl font-black">全体メモ</h3>
+                    <p className="whitespace-pre-wrap text-sm text-zinc-300">
+                      {detailSession.memo}
+                    </p>
+                  </Card>
+                )}
+
+                <div className="rounded-3xl border border-amber-500/40 bg-amber-400/10 p-5">
+                  <h3 className="text-xl font-black text-amber-300">
+                    精算結果
+                  </h3>
+                  <div className="mt-4 space-y-2">
+                    <ResultRow
+                      label="総投資"
+                      value={yen(detailResult.totalInvestment)}
+                    />
+                    <ResultRow
+                      label="交換金額"
+                      value={yen(detailResult.totalExchangeYen)}
+                    />
+                    <ResultRow
+                      label="全体収支"
+                      value={signedYen(detailResult.totalProfit)}
+                      positive={detailResult.totalProfit >= 0}
+                    />
+                    <ResultRow
+                      label="端数"
+                      value={yen(detailResult.remainder)}
+                    />
+                  </div>
+
+                  <div className="mt-5 space-y-3 border-t border-amber-500/20 pt-5">
+                    {detailResult.memberResults.map((result) => (
+                      <div
+                        key={result.member}
+                        className="rounded-2xl bg-zinc-950/70 p-4"
+                      >
+                        <div className="flex items-center justify-between font-black">
+                          <span>{result.member}</span>
+                          <span>{yen(result.receipt)}</span>
+                        </div>
+                        <p className="mt-1 text-xs text-zinc-400">受け取り</p>
+                        <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                          <Stat label="投資" value={yen(result.investment)} />
+                          <Stat
+                            label="個人収支"
+                            value={signedYen(result.balance)}
+                          />
+                          <Stat
+                            label="差枚"
+                            value={units(result.netCoins, "slot")}
+                          />
+                          <Stat
+                            label="差玉"
+                            value={units(result.netBalls, "pachinko")}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => editSession(detailSession)}
+                  className="w-full rounded-2xl bg-amber-400 py-4 font-black text-black"
+                >
+                  この記録を編集
+                </button>
+              </>
+            ) : (
+              <EmptyState text="記録が見つかりません" />
             )}
           </section>
         )}
