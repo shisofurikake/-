@@ -350,11 +350,12 @@ function calculateSession(session: NoriuchiSession) {
   );
 
   const totalProfit = totalExchangeYen - totalInvestment;
-  const equalProfit = totalProfit / MEMBERS.length;
+  const rawEqualProfit = totalProfit / MEMBERS.length;
+  const equalProfit = Math.trunc(rawEqualProfit / 1000) * 1000;
 
   const memberResults = MEMBERS.map((member) => {
     const investment = memberInvestment(session, member);
-    const rawReceipt = investment + equalProfit;
+    const rawReceipt = investment + rawEqualProfit;
     const receipt = Math.trunc(rawReceipt / 1000) * 1000;
     const personalProfit = memberPersonalProfit(session, member);
 
@@ -414,6 +415,7 @@ export default function Home() {
   const [sessions, setSessions] = useState<NoriuchiSession[]>([]);
   const [form, setForm] = useState<NoriuchiSession>(createEmptySession);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [forceSeparateSession, setForceSeparateSession] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [historyMonth, setHistoryMonth] = useState(todayString().slice(0, 7));
   const [selectedHistoryDate, setSelectedHistoryDate] = useState<string | null>(
@@ -601,6 +603,16 @@ export default function Home() {
     resetChangeTracking();
     setForm(createEmptySession());
     setEditingId(null);
+    setForceSeparateSession(false);
+    setPage("register");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function createSeparateSession() {
+    resetChangeTracking();
+    setForm(createEmptySession());
+    setEditingId(null);
+    setForceSeparateSession(true);
     setPage("register");
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -629,6 +641,7 @@ export default function Home() {
     resetChangeTracking();
     setForm(JSON.parse(JSON.stringify(session)));
     setEditingId(session.id);
+    setForceSeparateSession(false);
     setPage("register");
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -642,14 +655,40 @@ export default function Home() {
     }
 
     const now = new Date().toISOString();
-    const next: NoriuchiSession = {
+    let next: NoriuchiSession = {
       ...form,
       status,
       updatedAt: now,
       createdAt: editingId ? form.createdAt : now,
     };
+    let mergedIntoExistingDraft = false;
 
     try {
+      if (!editingId && !forceSeparateSession) {
+        const latestSessions =
+          await fetchSessionsFromSupabase<NoriuchiSession>();
+        const existingDraft = latestSessions
+          .filter(
+            (session) =>
+              session.status === "draft" &&
+              session.id !== form.id &&
+              session.date === form.date,
+          )
+          .sort(
+            (a, b) =>
+              new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+          )[0];
+
+        if (existingDraft) {
+          next = {
+            ...next,
+            id: existingDraft.id,
+            createdAt: existingDraft.createdAt,
+          };
+          mergedIntoExistingDraft = true;
+        }
+      }
+
       const saved = await saveSessionToSupabase<NoriuchiSession>(next, {
         plays: next.plays.filter((play) => dirtyPlayIds.has(play.id)),
         transfers: next.transfers.filter((transfer) =>
@@ -664,9 +703,9 @@ export default function Home() {
       });
 
       setSessions((current) => {
-        if (editingId) {
+        if (current.some((session) => session.id === saved.id)) {
           return current.map((session) =>
-            session.id === editingId ? saved : session,
+            session.id === saved.id ? saved : session,
           );
         }
 
@@ -676,7 +715,12 @@ export default function Home() {
       resetChangeTracking();
       setForm(createEmptySession());
       setEditingId(null);
+      setForceSeparateSession(false);
       setPage("history");
+
+      if (mergedIntoExistingDraft) {
+        alert("先に保存された未確定の記録へ、入力内容を合体しました");
+      }
     } catch (error) {
       console.error(error);
       alert("保存に失敗しました。通信状態を確認してね");
@@ -972,7 +1016,7 @@ export default function Home() {
 
             <button
               type="button"
-              onClick={createNewSession}
+              onClick={createSeparateSession}
               className="w-full rounded-2xl border border-zinc-700 py-4 font-black text-zinc-200"
             >
               ＋ 別のノリ打ちを始める
@@ -1089,7 +1133,7 @@ export default function Home() {
                         />
 
                         <label
-                          className={`w-full rounded-xl border px-4 py-3 text-left text-sm font-bold ${
+                          className={`flex w-full items-center gap-3 rounded-xl border px-4 py-3 text-left text-sm font-bold ${
                             play.usesPreviousUnits
                               ? "border-amber-400 bg-amber-400/20 text-amber-200"
                               : hasPreviousSameTypePlay(form.plays, index)
@@ -1097,22 +1141,32 @@ export default function Home() {
                                 : "cursor-not-allowed border-zinc-800 bg-zinc-900/50 text-zinc-600"
                           }`}
                         >
-                          <span className="flex items-center gap-3">
-                            <input
-                              type="checkbox"
-                              checked={play.usesPreviousUnits ?? false}
-                              disabled={
-                                !hasPreviousSameTypePlay(form.plays, index)
-                              }
-                              onChange={(event) =>
-                                updatePlay(
-                                  play.id,
-                                  "usesPreviousUnits",
-                                  event.target.checked,
-                                )
-                              }
-                              className="h-5 w-5 accent-amber-400"
-                            />
+                          <input
+                            type="checkbox"
+                            checked={play.usesPreviousUnits ?? false}
+                            disabled={
+                              !hasPreviousSameTypePlay(form.plays, index)
+                            }
+                            onChange={(event) =>
+                              updatePlay(
+                                play.id,
+                                "usesPreviousUnits",
+                                event.target.checked,
+                              )
+                            }
+                            className="sr-only"
+                          />
+                          <span
+                            aria-hidden="true"
+                            className={`flex h-5 w-5 shrink-0 items-center justify-center rounded border text-sm font-black ${
+                              play.usesPreviousUnits
+                                ? "border-amber-300 bg-amber-400 text-black"
+                                : "border-zinc-500 bg-zinc-950 text-transparent"
+                            }`}
+                          >
+                            ✓
+                          </span>
+                          <span>
                             前の台の持ち
                             {play.type === "slot" ? "メダル" : "玉"}を使用
                           </span>
