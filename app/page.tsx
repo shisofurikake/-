@@ -617,7 +617,8 @@ export default function Home() {
 
   function startNew() {
     if (draftSessions.length > 0) {
-      openDrafts();
+      setPage("drafts");
+      window.scrollTo({ top: 0, behavior: "smooth" });
       return;
     }
 
