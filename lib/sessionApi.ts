@@ -15,6 +15,15 @@ type SessionLike = {
   updatedAt: string;
 };
 
+type SessionChanges = {
+  plays: unknown[];
+  transfers: unknown[];
+  exchanges: unknown[];
+  deletedPlayIds: string[];
+  deletedTransferIds: string[];
+  deletedExchangeIds: string[];
+};
+
 type SessionRow = {
   id: string;
   play_date: string;
@@ -109,12 +118,35 @@ export async function fetchSessionsFromSupabase<T extends SessionLike>() {
   return ((data ?? []) as SessionRow[]).map((row) => fromRow<T>(row));
 }
 
-export async function saveSessionToSupabase(session: SessionLike) {
+export async function saveSessionToSupabase<T extends SessionLike>(
+  session: T,
+  changes?: SessionChanges,
+) {
+  if (changes) {
+    const { data, error } = await supabase
+      .rpc("merge_session", {
+        p_row: toRow(session),
+        p_plays: changes.plays,
+        p_transfers: changes.transfers,
+        p_exchanges: changes.exchanges,
+        p_deleted_play_ids: changes.deletedPlayIds,
+        p_deleted_transfer_ids: changes.deletedTransferIds,
+        p_deleted_exchange_ids: changes.deletedExchangeIds,
+      })
+      .single();
+
+    if (error) throw error;
+
+    return fromRow<T>(data as SessionRow);
+  }
+
   const { error } = await supabase
     .from("sessions")
     .upsert(toRow(session), { onConflict: "id" });
 
   if (error) throw error;
+
+  return session;
 }
 
 export async function deleteSessionFromSupabase(id: string) {

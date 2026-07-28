@@ -414,6 +414,20 @@ export default function Home() {
     null,
   );
   const [detailSessionId, setDetailSessionId] = useState<string | null>(null);
+  const [dirtyPlayIds, setDirtyPlayIds] = useState<Set<string>>(new Set());
+  const [dirtyTransferIds, setDirtyTransferIds] = useState<Set<string>>(
+    new Set(),
+  );
+  const [dirtyExchangeIds, setDirtyExchangeIds] = useState<Set<string>>(
+    new Set(),
+  );
+  const [deletedPlayIds, setDeletedPlayIds] = useState<Set<string>>(new Set());
+  const [deletedTransferIds, setDeletedTransferIds] = useState<Set<string>>(
+    new Set(),
+  );
+  const [deletedExchangeIds, setDeletedExchangeIds] = useState<Set<string>>(
+    new Set(),
+  );
 
   useEffect(() => {
     let active = true;
@@ -560,13 +574,24 @@ export default function Home() {
     };
   }).sort((a, b) => b.netCoins + b.netBalls - (a.netCoins + a.netBalls));
 
+  function resetChangeTracking() {
+    setDirtyPlayIds(new Set());
+    setDirtyTransferIds(new Set());
+    setDirtyExchangeIds(new Set());
+    setDeletedPlayIds(new Set());
+    setDeletedTransferIds(new Set());
+    setDeletedExchangeIds(new Set());
+  }
+
   function startNew() {
+    resetChangeTracking();
     setForm(createEmptySession());
     setEditingId(null);
     setPage("register");
   }
 
   function editSession(session: NoriuchiSession) {
+    resetChangeTracking();
     setForm(JSON.parse(JSON.stringify(session)));
     setEditingId(session.id);
     setPage("register");
@@ -590,18 +615,30 @@ export default function Home() {
     };
 
     try {
-      await saveSessionToSupabase(next);
+      const saved = await saveSessionToSupabase<NoriuchiSession>(next, {
+        plays: next.plays.filter((play) => dirtyPlayIds.has(play.id)),
+        transfers: next.transfers.filter((transfer) =>
+          dirtyTransferIds.has(transfer.id),
+        ),
+        exchanges: next.exchanges.filter((exchange) =>
+          dirtyExchangeIds.has(exchange.id),
+        ),
+        deletedPlayIds: [...deletedPlayIds],
+        deletedTransferIds: [...deletedTransferIds],
+        deletedExchangeIds: [...deletedExchangeIds],
+      });
 
       setSessions((current) => {
         if (editingId) {
           return current.map((session) =>
-            session.id === editingId ? next : session,
+            session.id === editingId ? saved : session,
           );
         }
 
-        return [next, ...current];
+        return [saved, ...current];
       });
 
+      resetChangeTracking();
       setForm(createEmptySession());
       setEditingId(null);
       setPage("history");
@@ -628,6 +665,7 @@ export default function Home() {
     field: keyof Omit<PlayEntry, "id">,
     value: string | number | boolean,
   ) {
+    setDirtyPlayIds((current) => new Set(current).add(id));
     setForm((current) => ({
       ...current,
       plays: current.plays.map((play) =>
@@ -637,12 +675,14 @@ export default function Home() {
   }
 
   function addPlay(type: PlayType) {
+    const id = newId();
+    setDirtyPlayIds((current) => new Set(current).add(id));
     setForm((current) => ({
       ...current,
       plays: [
         ...current.plays,
         {
-          id: newId(),
+          id,
           type,
           member: "すぎさん",
           machine: "",
@@ -657,6 +697,12 @@ export default function Home() {
   }
 
   function removePlay(id: string) {
+    setDirtyPlayIds((current) => {
+      const next = new Set(current);
+      next.delete(id);
+      return next;
+    });
+    setDeletedPlayIds((current) => new Set(current).add(id));
     setForm((current) => ({
       ...current,
       plays: current.plays.filter((play) => play.id !== id),
@@ -664,12 +710,14 @@ export default function Home() {
   }
 
   function addTransfer(type: PlayType) {
+    const id = newId();
+    setDirtyTransferIds((current) => new Set(current).add(id));
     setForm((current) => ({
       ...current,
       transfers: [
         ...current.transfers,
         {
-          id: newId(),
+          id,
           from: "すぎさん",
           to: "こうちさん",
           type,
@@ -684,6 +732,7 @@ export default function Home() {
     field: keyof Omit<Transfer, "id">,
     value: string | number,
   ) {
+    setDirtyTransferIds((current) => new Set(current).add(id));
     setForm((current) => ({
       ...current,
       transfers: current.transfers.map((transfer) =>
@@ -693,6 +742,12 @@ export default function Home() {
   }
 
   function removeTransfer(id: string) {
+    setDirtyTransferIds((current) => {
+      const next = new Set(current);
+      next.delete(id);
+      return next;
+    });
+    setDeletedTransferIds((current) => new Set(current).add(id));
     setForm((current) => ({
       ...current,
       transfers: current.transfers.filter((transfer) => transfer.id !== id),
@@ -700,12 +755,14 @@ export default function Home() {
   }
 
   function addExchange(type: PlayType) {
+    const id = newId();
+    setDirtyExchangeIds((current) => new Set(current).add(id));
     setForm((current) => ({
       ...current,
       exchanges: [
         ...current.exchanges,
         {
-          id: newId(),
+          id,
           members: [...MEMBERS],
           type,
           units: 0,
@@ -721,6 +778,7 @@ export default function Home() {
     field: "type" | "units" | "yen" | "memo",
     value: string | number,
   ) {
+    setDirtyExchangeIds((current) => new Set(current).add(id));
     setForm((current) => ({
       ...current,
       exchanges: current.exchanges.map((exchange) =>
@@ -730,6 +788,7 @@ export default function Home() {
   }
 
   function toggleExchangeMember(id: string, member: MemberName) {
+    setDirtyExchangeIds((current) => new Set(current).add(id));
     setForm((current) => ({
       ...current,
       exchanges: current.exchanges.map((exchange) => {
@@ -747,6 +806,12 @@ export default function Home() {
   }
 
   function removeExchange(id: string) {
+    setDirtyExchangeIds((current) => {
+      const next = new Set(current);
+      next.delete(id);
+      return next;
+    });
+    setDeletedExchangeIds((current) => new Set(current).add(id));
     setForm((current) => ({
       ...current,
       exchanges: current.exchanges.filter((exchange) => exchange.id !== id),
