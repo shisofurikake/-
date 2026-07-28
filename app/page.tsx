@@ -312,6 +312,26 @@ function memberNetUnits(
   );
 }
 
+function memberRecoveredUnits(
+  session: NoriuchiSession,
+  member: MemberName,
+  type: PlayType,
+) {
+  return (
+    memberFinalUnits(session, member, type) +
+    memberSentUnits(session, member, type) -
+    memberReceivedUnits(session, member, type)
+  );
+}
+
+function memberPersonalProfit(session: NoriuchiSession, member: MemberName) {
+  const slotValue = (memberRecoveredUnits(session, member, "slot") / 50) * 1000;
+  const pachinkoValue =
+    (memberRecoveredUnits(session, member, "pachinko") / 250) * 1000;
+
+  return slotValue + pachinkoValue - memberInvestment(session, member);
+}
+
 function calculateSession(session: NoriuchiSession) {
   const totalInvestment = MEMBERS.reduce(
     (sum, member) => sum + memberInvestment(session, member),
@@ -330,12 +350,14 @@ function calculateSession(session: NoriuchiSession) {
     const investment = memberInvestment(session, member);
     const rawReceipt = investment + equalProfit;
     const receipt = Math.trunc(rawReceipt / 1000) * 1000;
+    const personalProfit = memberPersonalProfit(session, member);
 
     return {
       member,
       investment,
       receipt,
       balance: receipt - investment,
+      personalProfit,
       netCoins: memberNetUnits(session, member, "slot"),
       netBalls: memberNetUnits(session, member, "pachinko"),
       sentCoins: memberSentUnits(session, member, "slot"),
@@ -1188,6 +1210,11 @@ export default function Home() {
                   value={signedYen(preview.totalProfit)}
                   positive={preview.totalProfit >= 0}
                 />
+                <ResultRow
+                  label="1人あたりの収支"
+                  value={signedYen(preview.equalProfit)}
+                  positive={preview.equalProfit >= 0}
+                />
                 <ResultRow label="端数" value={yen(preview.remainder)} />
               </div>
 
@@ -1431,6 +1458,11 @@ export default function Home() {
                                 label="全体収支"
                                 value={signedYen(result.totalProfit)}
                                 positive={result.totalProfit >= 0}
+                              />
+                              <ResultRow
+                                label="1人あたりの収支"
+                                value={signedYen(result.equalProfit)}
+                                positive={result.equalProfit >= 0}
                               />
                               <ResultRow
                                 label="端数"
@@ -1697,6 +1729,11 @@ export default function Home() {
                       positive={detailResult.totalProfit >= 0}
                     />
                     <ResultRow
+                      label="1人あたりの収支"
+                      value={signedYen(detailResult.equalProfit)}
+                      positive={detailResult.equalProfit >= 0}
+                    />
+                    <ResultRow
                       label="端数"
                       value={yen(detailResult.remainder)}
                     />
@@ -1717,7 +1754,7 @@ export default function Home() {
                           <Stat label="投資" value={yen(result.investment)} />
                           <Stat
                             label="個人収支"
-                            value={signedYen(result.balance)}
+                            value={signedYen(result.personalProfit)}
                           />
                           <Stat
                             label="差枚"
@@ -1728,6 +1765,9 @@ export default function Home() {
                             value={units(result.netBalls, "pachinko")}
                           />
                         </div>
+                        <p className="mt-2 text-[10px] text-zinc-600">
+                          個人収支は50枚＝1,000円・250玉＝1,000円で計算
+                        </p>
                       </div>
                     ))}
                   </div>
