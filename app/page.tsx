@@ -10,7 +10,13 @@ import {
 
 const MEMBERS = ["すぎさん", "こうちさん", "こんちゃみ"] as const;
 type MemberName = (typeof MEMBERS)[number];
-type PageName = "home" | "register" | "history" | "detail" | "analysis";
+type PageName =
+  | "home"
+  | "register"
+  | "drafts"
+  | "history"
+  | "detail"
+  | "analysis";
 type SessionStatus = "draft" | "confirmed";
 type PlayType = "slot" | "pachinko";
 
@@ -528,9 +534,17 @@ export default function Home() {
     sessions.find((session) => session.id === detailSessionId) ?? null;
   const detailResult = detailSession ? calculateSession(detailSession) : null;
 
-  const draftCount = sessions.filter(
-    (session) => session.status === "draft",
-  ).length;
+  const draftSessions = useMemo(
+    () =>
+      sessions
+        .filter((session) => session.status === "draft")
+        .sort(
+          (a, b) =>
+            new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+        ),
+    [sessions],
+  );
+  const draftCount = draftSessions.length;
 
   const analysis = MEMBERS.map((member) => {
     const investment = confirmedSessions.reduce(
@@ -583,11 +597,31 @@ export default function Home() {
     setDeletedExchangeIds(new Set());
   }
 
-  function startNew() {
+  function createNewSession() {
     resetChangeTracking();
     setForm(createEmptySession());
     setEditingId(null);
     setPage("register");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function openDrafts() {
+    if (draftSessions.length === 1) {
+      editSession(draftSessions[0]);
+      return;
+    }
+
+    setPage("drafts");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function startNew() {
+    if (draftSessions.length > 0) {
+      openDrafts();
+      return;
+    }
+
+    createNewSession();
   }
 
   function editSession(session: NoriuchiSession) {
@@ -856,9 +890,7 @@ export default function Home() {
 
             <button
               type="button"
-              onClick={() => {
-                setPage("history");
-              }}
+              onClick={openDrafts}
               className="flex w-full items-center justify-between rounded-3xl border border-zinc-800 bg-zinc-900 p-5 text-left"
             >
               <div>
@@ -889,6 +921,60 @@ export default function Home() {
               className="w-full rounded-2xl bg-amber-400 py-4 text-lg font-black text-black"
             >
               ＋ 新しいノリ打ち
+            </button>
+          </section>
+        )}
+
+        {page === "drafts" && (
+          <section className="space-y-5">
+            <button
+              type="button"
+              onClick={() => setPage("home")}
+              className="font-bold text-amber-300"
+            >
+              ← ホームに戻る
+            </button>
+
+            <div>
+              <h2 className="text-2xl font-black">未確定の記録</h2>
+              <p className="mt-1 text-sm text-zinc-400">
+                続きを入力する記録を選んでね
+              </p>
+            </div>
+
+            {draftSessions.length === 0 ? (
+              <EmptyState text="未確定の記録はありません" />
+            ) : (
+              <div className="space-y-3">
+                {draftSessions.map((session) => (
+                  <button
+                    key={session.id}
+                    type="button"
+                    onClick={() => editSession(session)}
+                    className="flex w-full items-center justify-between gap-4 rounded-3xl border border-amber-400/40 bg-amber-400/10 p-5 text-left"
+                  >
+                    <div>
+                      <p className="font-black">
+                        {session.hall || "ホール未入力"}
+                      </p>
+                      <p className="mt-1 text-sm text-zinc-400">
+                        {session.date}・遊技 {session.plays.length}件
+                      </p>
+                    </div>
+                    <span className="shrink-0 font-black text-amber-300">
+                      編集する ›
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={createNewSession}
+              className="w-full rounded-2xl border border-zinc-700 py-4 font-black text-zinc-200"
+            >
+              ＋ 別のノリ打ちを始める
             </button>
           </section>
         )}
@@ -1929,7 +2015,7 @@ export default function Home() {
       <nav className="fixed inset-x-0 bottom-0 border-t border-zinc-800 bg-zinc-950/95 backdrop-blur">
         <div className="mx-auto grid max-w-md grid-cols-4">
           <NavButton
-            active={page === "home"}
+            active={page === "home" || page === "drafts"}
             label="ホーム"
             icon="🏠"
             onClick={() => setPage("home")}
