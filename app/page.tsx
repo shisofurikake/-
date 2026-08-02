@@ -19,6 +19,7 @@ type PageName =
   | "analysis";
 type SessionStatus = "draft" | "confirmed";
 type PlayType = "slot" | "pachinko";
+type AnalysisPeriod = "month" | "year";
 
 type PlayEntry = {
   id: string;
@@ -241,7 +242,7 @@ function migrateOldRecords(oldRecords: OldRecord[]): NoriuchiSession[] {
 function memberInvestment(session: NoriuchiSession, member: MemberName) {
   return session.plays
     .filter((play) => play.member === member)
-    .reduce((sum, play) => sum + play.investment, 0);
+    .reduce((sum, play) => sum + Number(play.investment ?? 0), 0);
 }
 
 function memberPurchasedUnits(
@@ -418,6 +419,9 @@ export default function Home() {
   const [forceSeparateSession, setForceSeparateSession] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [historyMonth, setHistoryMonth] = useState(todayString().slice(0, 7));
+  const [analysisPeriod, setAnalysisPeriod] = useState<AnalysisPeriod>("month");
+  const [analysisMonth, setAnalysisMonth] = useState(todayString().slice(0, 7));
+  const [analysisYear, setAnalysisYear] = useState(todayString().slice(0, 4));
   const [selectedHistoryDate, setSelectedHistoryDate] = useState<string | null>(
     null,
   );
@@ -548,32 +552,46 @@ export default function Home() {
   );
   const draftCount = draftSessions.length;
 
+  const analysisSessions = confirmedSessions.filter((session) =>
+    analysisPeriod === "month"
+      ? session.date.startsWith(analysisMonth)
+      : session.date.startsWith(analysisYear),
+  );
+  const analysisProfit = analysisSessions.reduce(
+    (sum, session) => sum + calculateSession(session).totalProfit,
+    0,
+  );
+  const analysisPeriodLabel =
+    analysisPeriod === "month"
+      ? monthLabel(analysisMonth)
+      : `${Number(analysisYear)}年`;
+
   const analysis = MEMBERS.map((member) => {
-    const investment = confirmedSessions.reduce(
+    const investment = analysisSessions.reduce(
       (sum, session) => sum + memberInvestment(session, member),
       0,
     );
-    const netCoins = confirmedSessions.reduce(
+    const netCoins = analysisSessions.reduce(
       (sum, session) => sum + memberNetUnits(session, member, "slot"),
       0,
     );
-    const netBalls = confirmedSessions.reduce(
+    const netBalls = analysisSessions.reduce(
       (sum, session) => sum + memberNetUnits(session, member, "pachinko"),
       0,
     );
-    const sentCoins = confirmedSessions.reduce(
+    const sentCoins = analysisSessions.reduce(
       (sum, session) => sum + memberSentUnits(session, member, "slot"),
       0,
     );
-    const receivedCoins = confirmedSessions.reduce(
+    const receivedCoins = analysisSessions.reduce(
       (sum, session) => sum + memberReceivedUnits(session, member, "slot"),
       0,
     );
-    const sentBalls = confirmedSessions.reduce(
+    const sentBalls = analysisSessions.reduce(
       (sum, session) => sum + memberSentUnits(session, member, "pachinko"),
       0,
     );
-    const receivedBalls = confirmedSessions.reduce(
+    const receivedBalls = analysisSessions.reduce(
       (sum, session) => sum + memberReceivedUnits(session, member, "pachinko"),
       0,
     );
@@ -1435,6 +1453,12 @@ export default function Home() {
                       <span>{yen(result.receipt)}</span>
                     </div>
                     <p className="mt-1 text-xs text-zinc-400">受け取り予定</p>
+                    <p className="mt-3 text-sm text-zinc-400">
+                      総投資{" "}
+                      <span className="font-black text-white">
+                        {yen(result.investment)}
+                      </span>
+                    </p>
                     <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
                       <div className="rounded-xl bg-zinc-900 p-2">
                         差枚 {units(result.netCoins, "slot")}
@@ -1689,6 +1713,12 @@ export default function Home() {
                                     </div>
                                     <p className="mt-1 text-xs text-zinc-400">
                                       受け取り
+                                    </p>
+                                    <p className="mt-3 text-sm text-zinc-400">
+                                      総投資{" "}
+                                      <span className="font-black text-white">
+                                        {yen(memberResult.investment)}
+                                      </span>
                                     </p>
                                     <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
                                       <div className="rounded-xl bg-zinc-900 p-2">
@@ -1957,7 +1987,7 @@ export default function Home() {
                         </div>
                         <p className="mt-1 text-xs text-zinc-400">受け取り</p>
                         <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                          <Stat label="投資" value={yen(result.investment)} />
+                          <Stat label="総投資" value={yen(result.investment)} />
                           <Stat
                             label="個人収支"
                             value={signedYen(result.personalProfit)}
@@ -1994,16 +2024,85 @@ export default function Home() {
         )}
 
         {page === "analysis" && (
-          <section>
-            <div className="mb-5">
+          <section className="space-y-5">
+            <div>
               <h2 className="text-2xl font-black">ランキング・分析</h2>
               <p className="mt-1 text-sm text-zinc-400">
-                確定済みの記録だけを集計
+                月間・年間の確定済み記録を振り返れます
               </p>
             </div>
 
-            {confirmedSessions.length === 0 ? (
-              <EmptyState text="記録を確定すると分析が表示されます" />
+            <div className="rounded-3xl border border-zinc-800 bg-zinc-900 p-5">
+              <div className="grid grid-cols-2 gap-2 rounded-2xl bg-zinc-950 p-1">
+                <button
+                  type="button"
+                  onClick={() => setAnalysisPeriod("month")}
+                  className={`rounded-xl py-3 font-black ${
+                    analysisPeriod === "month"
+                      ? "bg-amber-400 text-black"
+                      : "text-zinc-400"
+                  }`}
+                >
+                  月間
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAnalysisPeriod("year");
+                    setAnalysisYear(analysisMonth.slice(0, 4));
+                  }}
+                  className={`rounded-xl py-3 font-black ${
+                    analysisPeriod === "year"
+                      ? "bg-amber-400 text-black"
+                      : "text-zinc-400"
+                  }`}
+                >
+                  年間
+                </button>
+              </div>
+
+              <div className="mt-4 flex items-center justify-between">
+                <button
+                  type="button"
+                  aria-label={analysisPeriod === "month" ? "前の月" : "前年"}
+                  onClick={() => {
+                    if (analysisPeriod === "month") {
+                      setAnalysisMonth((current) => shiftMonth(current, -1));
+                    } else {
+                      setAnalysisYear((current) => String(Number(current) - 1));
+                    }
+                  }}
+                  className="rounded-xl bg-zinc-800 px-4 py-2 text-xl font-black"
+                >
+                  ‹
+                </button>
+                <p className="text-lg font-black">{analysisPeriodLabel}</p>
+                <button
+                  type="button"
+                  aria-label={analysisPeriod === "month" ? "次の月" : "翌年"}
+                  onClick={() => {
+                    if (analysisPeriod === "month") {
+                      setAnalysisMonth((current) => shiftMonth(current, 1));
+                    } else {
+                      setAnalysisYear((current) => String(Number(current) + 1));
+                    }
+                  }}
+                  className="rounded-xl bg-zinc-800 px-4 py-2 text-xl font-black"
+                >
+                  ›
+                </button>
+              </div>
+
+              <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                <Stat label="確定済み" value={`${analysisSessions.length}件`} />
+                <Stat label="全体収支" value={signedYen(analysisProfit)} />
+              </div>
+            </div>
+
+            {analysisSessions.length === 0 ? (
+              <EmptyState
+                text={`${analysisPeriodLabel}の確定済み記録はありません`}
+              />
             ) : (
               <div className="space-y-4">
                 {analysis.map((result, index) => (
