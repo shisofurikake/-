@@ -601,12 +601,13 @@ export default function Home() {
       investment,
       netCoins,
       netBalls,
+      rankingValue: netCoins * 20 + netBalls * 4,
       sentCoins,
       receivedCoins,
       sentBalls,
       receivedBalls,
     };
-  }).sort((a, b) => b.netCoins + b.netBalls - (a.netCoins + a.netBalls));
+  }).sort((a, b) => b.rankingValue - a.rankingValue);
 
   function resetChangeTracking() {
     setDirtyPlayIds(new Set());
