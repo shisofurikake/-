@@ -331,6 +331,22 @@ function memberRecoveredUnits(
   );
 }
 
+function memberFixedRateNetUnits(
+  session: NoriuchiSession,
+  member: MemberName,
+  type: PlayType,
+) {
+  const fixedRate = type === "slot" ? 50 : 250;
+  const investedUnits = session.plays
+    .filter((play) => play.member === member && play.type === type)
+    .reduce(
+      (sum, play) => sum + (Number(play.investment ?? 0) / 1000) * fixedRate,
+      0,
+    );
+
+  return memberRecoveredUnits(session, member, type) - investedUnits;
+}
+
 function memberPersonalProfit(session: NoriuchiSession, member: MemberName) {
   const slotValue = (memberRecoveredUnits(session, member, "slot") / 50) * 1000;
   const pachinkoValue =
@@ -572,11 +588,12 @@ export default function Home() {
       0,
     );
     const netCoins = analysisSessions.reduce(
-      (sum, session) => sum + memberNetUnits(session, member, "slot"),
+      (sum, session) => sum + memberFixedRateNetUnits(session, member, "slot"),
       0,
     );
     const netBalls = analysisSessions.reduce(
-      (sum, session) => sum + memberNetUnits(session, member, "pachinko"),
+      (sum, session) =>
+        sum + memberFixedRateNetUnits(session, member, "pachinko"),
       0,
     );
     const sentCoins = analysisSessions.reduce(
