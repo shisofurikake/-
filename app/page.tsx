@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   deleteSessionFromSupabase,
   fetchSessionsFromSupabase,
+  mergeDraftSessionsInSupabase,
   saveSessionToSupabase,
   subscribeToSessionChanges,
 } from "@/lib/sessionApi";
@@ -548,6 +549,8 @@ export default function Home() {
     "connecting" | "connected" | "error"
   >("connecting");
   const [syncMessage, setSyncMessage] = useState("");
+  const [draftMergeIds, setDraftMergeIds] = useState<string[]>([]);
+  const [isMergingDrafts, setIsMergingDrafts] = useState(false);
 
   const liveEditRef = useRef({
     page,
@@ -603,6 +606,20 @@ export default function Home() {
     const timeoutId = window.setTimeout(() => setSyncMessage(""), 3000);
     return () => window.clearTimeout(timeoutId);
   }, [syncMessage]);
+
+  useEffect(() => {
+    setDraftMergeIds((current) =>
+      current.filter((id) =>
+        sessions.some(
+          (session) => session.id === id && session.status === "draft",
+        ),
+      ),
+    );
+  }, [sessions]);
+
+  useEffect(() => {
+    setDraftMergeIds([]);
+  }, [selectedHistoryDate]);
 
   useEffect(() => {
     let active = true;
@@ -970,6 +987,71 @@ export default function Home() {
     }
   }
 
+  function toggleDraftMerge(sessionId: string) {
+    setDraftMergeIds((current) =>
+      current.includes(sessionId)
+        ? current.filter((id) => id !== sessionId)
+        : [...current, sessionId],
+    );
+  }
+
+  async function mergeSelectedDrafts() {
+    const selectedDrafts = sessions.filter(
+      (session) =>
+        session.status === "draft" && draftMergeIds.includes(session.id),
+    );
+
+    if (selectedDrafts.length < 2) {
+      alert("統合する未確定記録を2件以上選んでね");
+      return;
+    }
+
+    if (new Set(selectedDrafts.map((session) => session.date)).size !== 1) {
+      alert("同じ日付の未確定記録だけを選んでね");
+      return;
+    }
+
+    const playCount = selectedDrafts.reduce(
+      (sum, session) => sum + session.plays.length,
+      0,
+    );
+    const totalInvestment = selectedDrafts.reduce(
+      (sum, session) => sum + calculateSession(session).totalInvestment,
+      0,
+    );
+
+    if (
+      !confirm(
+        `${selectedDrafts.length}件を1件に統合する？\n遊技 ${playCount}件・総投資 ${yen(totalInvestment)}`,
+      )
+    ) {
+      return;
+    }
+
+    setIsMergingDrafts(true);
+
+    try {
+      const merged = await mergeDraftSessionsInSupabase<NoriuchiSession>(
+        selectedDrafts.map((session) => session.id),
+      );
+      const latest = await fetchSessionsFromSupabase<NoriuchiSession>();
+
+      setSessions(latest);
+      setDraftMergeIds([]);
+      setSelectedHistoryDate(merged.date);
+      setPage("history");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      alert(
+        `未確定記録を1件に統合しました\n遊技 ${merged.plays.length}件・総投資 ${yen(calculateSession(merged).totalInvestment)}`,
+      );
+    } catch (error) {
+      console.error(error);
+      alert("統合に失敗しました。記録は変更されていません");
+    } finally {
+      setIsMergingDrafts(false);
+    }
+  }
+
   async function deleteSession(id: string) {
     if (!confirm("この記録を削除する？")) return;
 
@@ -1270,34 +1352,85 @@ export default function Home() {
             <div>
               <h2 className="text-2xl font-black">未確定の記録</h2>
               <p className="mt-1 text-sm text-zinc-400">
-                続きを入力する記録を選んでね
+                編集するか、複数選んで1件に統合できます
               </p>
             </div>
+
+            {draftSessions.length >= 2 && (
+              <div className="rounded-3xl border border-amber-400/40 bg-amber-400/10 p-4">
+                <p className="text-sm text-zinc-300">
+                  同じ日付の記録を2件以上選んでね
+                </p>
+                <button
+                  type="button"
+                  disabled={draftMergeIds.length < 2 || isMergingDrafts}
+                  onClick={() => void mergeSelectedDrafts()}
+                  className="mt-3 w-full rounded-2xl bg-amber-400 py-3 font-black text-black disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {isMergingDrafts
+                    ? "統合しています…"
+                    : `選んだ記録を統合（${draftMergeIds.length}件）`}
+                </button>
+              </div>
+            )}
 
             {draftSessions.length === 0 ? (
               <EmptyState text="未確定の記録はありません" />
             ) : (
               <div className="space-y-3">
-                {draftSessions.map((session) => (
-                  <button
-                    key={session.id}
-                    type="button"
-                    onClick={() => editSession(session)}
-                    className="flex w-full items-center justify-between gap-4 rounded-3xl border border-amber-400/40 bg-amber-400/10 p-5 text-left"
-                  >
-                    <div>
-                      <p className="font-black">
-                        {session.hall || "ホール未入力"}
-                      </p>
-                      <p className="mt-1 text-sm text-zinc-400">
-                        {session.date}・遊技 {session.plays.length}件
-                      </p>
+                {draftSessions.map((session) => {
+                  const selected = draftMergeIds.includes(session.id);
+
+                  return (
+                    <div
+                      key={session.id}
+                      className={`rounded-3xl border p-4 ${
+                        selected
+                          ? "border-amber-300 bg-amber-400/20"
+                          : "border-amber-400/40 bg-amber-400/10"
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => toggleDraftMerge(session.id)}
+                        className="flex w-full items-center gap-3 rounded-2xl bg-zinc-950/60 px-4 py-3 text-left"
+                      >
+                        <span
+                          className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md border font-black ${
+                            selected
+                              ? "border-amber-300 bg-amber-400 text-black"
+                              : "border-zinc-600 text-transparent"
+                          }`}
+                        >
+                          ✓
+                        </span>
+                        <span className="font-bold">
+                          {selected ? "統合対象に選択中" : "統合対象に選ぶ"}
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => editSession(session)}
+                        className="mt-3 flex w-full items-center justify-between gap-4 px-1 text-left"
+                      >
+                        <div>
+                          <p className="font-black">
+                            {session.hall || "ホール未入力"}
+                          </p>
+                          <p className="mt-1 text-sm text-zinc-400">
+                            {session.date}・遊技 {session.plays.length}
+                            件・総投資{" "}
+                            {yen(calculateSession(session).totalInvestment)}
+                          </p>
+                        </div>
+                        <span className="shrink-0 font-black text-amber-300">
+                          編集する ›
+                        </span>
+                      </button>
                     </div>
-                    <span className="shrink-0 font-black text-amber-300">
-                      編集する ›
-                    </span>
-                  </button>
-                ))}
+                  );
+                })}
               </div>
             )}
 
@@ -1901,6 +2034,26 @@ export default function Home() {
                       {Number(selectedHistoryDate.slice(8, 10))}日の記録
                     </h3>
 
+                    {selectedDateSessions.filter(
+                      (session) => session.status === "draft",
+                    ).length >= 2 && (
+                      <div className="rounded-3xl border border-amber-400/40 bg-amber-400/10 p-4">
+                        <p className="text-sm text-zinc-300">
+                          統合したい未確定記録を選んでね
+                        </p>
+                        <button
+                          type="button"
+                          disabled={draftMergeIds.length < 2 || isMergingDrafts}
+                          onClick={() => void mergeSelectedDrafts()}
+                          className="mt-3 w-full rounded-2xl bg-amber-400 py-3 font-black text-black disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          {isMergingDrafts
+                            ? "統合しています…"
+                            : `選んだ記録を統合（${draftMergeIds.length}件）`}
+                        </button>
+                      </div>
+                    )}
+
                     {selectedDateSessions.map((session) => {
                       const result = calculateSession(session);
 
@@ -2010,6 +2163,27 @@ export default function Home() {
                               <p className="mt-4 rounded-2xl bg-zinc-950 p-4 text-sm text-zinc-300">
                                 {session.memo}
                               </p>
+                            )}
+
+                            {session.status === "draft" && (
+                              <button
+                                type="button"
+                                onClick={() => toggleDraftMerge(session.id)}
+                                className={`mt-5 flex w-full items-center justify-center gap-3 rounded-xl border py-3 font-black ${
+                                  draftMergeIds.includes(session.id)
+                                    ? "border-amber-300 bg-amber-400 text-black"
+                                    : "border-amber-400/50 bg-amber-400/10 text-amber-300"
+                                }`}
+                              >
+                                <span>
+                                  {draftMergeIds.includes(session.id)
+                                    ? "✓"
+                                    : "□"}
+                                </span>
+                                {draftMergeIds.includes(session.id)
+                                  ? "統合対象に選択中"
+                                  : "統合対象に選ぶ"}
+                              </button>
                             )}
 
                             {session.status === "confirmed" && (

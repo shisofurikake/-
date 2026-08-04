@@ -149,6 +149,18 @@ export async function saveSessionToSupabase<T extends SessionLike>(
   return session;
 }
 
+export async function mergeDraftSessionsInSupabase<T extends SessionLike>(
+  sessionIds: string[],
+) {
+  const { data, error } = await supabase
+    .rpc("merge_draft_sessions", { p_session_ids: sessionIds })
+    .single();
+
+  if (error) throw error;
+
+  return fromRow<T>(data as SessionRow);
+}
+
 export async function deleteSessionFromSupabase(id: string) {
   const { error } = await supabase.from("sessions").delete().eq("id", id);
 
