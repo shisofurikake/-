@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   deleteSessionFromSupabase,
   fetchSessionsFromSupabase,
@@ -428,6 +428,7 @@ function validateSession(session: NoriuchiSession, confirmMode: boolean) {
 }
 
 export default function Home() {
+  const pendingPlayScrollId = useRef<string | null>(null);
   const [page, setPage] = useState<PageName>("home");
   const [sessions, setSessions] = useState<NoriuchiSession[]>([]);
   const [form, setForm] = useState<NoriuchiSession>(createEmptySession);
@@ -456,6 +457,21 @@ export default function Home() {
   const [deletedExchangeIds, setDeletedExchangeIds] = useState<Set<string>>(
     new Set(),
   );
+
+  useEffect(() => {
+    const playId = pendingPlayScrollId.current;
+    if (!playId) return;
+
+    const frameId = requestAnimationFrame(() => {
+      document.getElementById(`play-${playId}`)?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+      pendingPlayScrollId.current = null;
+    });
+
+    return () => cancelAnimationFrame(frameId);
+  }, [form.plays.length]);
 
   useEffect(() => {
     let active = true;
@@ -791,6 +807,7 @@ export default function Home() {
 
   function addPlay(type: PlayType) {
     const id = newId();
+    pendingPlayScrollId.current = id;
     setDirtyPlayIds((current) => new Set(current).add(id));
     setForm((current) => ({
       ...current,
@@ -1114,7 +1131,11 @@ export default function Home() {
               ) : (
                 <div className="mt-4 space-y-4">
                   {form.plays.map((play, index) => (
-                    <div key={play.id} className="rounded-2xl bg-zinc-950 p-4">
+                    <div
+                      id={`play-${play.id}`}
+                      key={play.id}
+                      className="scroll-mt-4 rounded-2xl bg-zinc-950 p-4"
+                    >
                       <div className="mb-4 flex items-center justify-between">
                         <p className="font-black">
                           {index + 1}. {typeLabel(play.type)}
