@@ -155,7 +155,10 @@ export async function deleteSessionFromSupabase(id: string) {
   if (error) throw error;
 }
 
-export function subscribeToSessionChanges(onChange: () => void) {
+export function subscribeToSessionChanges(
+  onChange: () => void,
+  onStatus?: (status: "connecting" | "connected" | "error") => void,
+) {
   const channel = supabase
     .channel("sessions-shared")
     .on(
@@ -167,7 +170,19 @@ export function subscribeToSessionChanges(onChange: () => void) {
       },
       onChange,
     )
-    .subscribe();
+    .subscribe((status: string) => {
+      if (status === "SUBSCRIBED") {
+        onStatus?.("connected");
+      } else if (
+        status === "CHANNEL_ERROR" ||
+        status === "TIMED_OUT" ||
+        status === "CLOSED"
+      ) {
+        onStatus?.("error");
+      } else {
+        onStatus?.("connecting");
+      }
+    });
 
   return () => {
     void supabase.removeChannel(channel);

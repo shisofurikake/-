@@ -63,6 +63,9 @@ type NoriuchiSession = {
   updatedAt: string;
 };
 
+type SessionField = "date" | "hall" | "memo";
+type DirtyFieldMap = Map<string, Set<string>>;
+
 type OldRecord = {
   id?: string;
   date?: string;
@@ -417,14 +420,92 @@ function validateSession(session: NoriuchiSession, confirmMode: boolean) {
     return "確定するには交換内容を1件以上入力してね";
   }
 
-  if (
-    confirmMode &&
-    session.exchanges.reduce((sum, exchange) => sum + exchange.yen, 0) <= 0
-  ) {
-    return "確定するには交換金額を入力してね";
-  }
-
   return "";
+}
+
+function mergeRealtimeItems<T extends { id: string }>(
+  remoteItems: T[],
+  localItems: T[],
+  dirtyIds: Set<string>,
+  dirtyFields: DirtyFieldMap,
+  deletedIds: Set<string>,
+) {
+  const localById = new Map(localItems.map((item) => [item.id, item]));
+  const remoteIds = new Set(remoteItems.map((item) => item.id));
+
+  const merged = remoteItems
+    .filter((item) => !deletedIds.has(item.id))
+    .map((remoteItem) => {
+      if (!dirtyIds.has(remoteItem.id)) return remoteItem;
+
+      const localItem = localById.get(remoteItem.id);
+      if (!localItem) return remoteItem;
+
+      const fields = dirtyFields.get(remoteItem.id);
+      if (!fields || fields.has("*")) return localItem;
+
+      const nextItem = { ...remoteItem } as Record<string, unknown>;
+      const localRecord = localItem as unknown as Record<string, unknown>;
+      fields.forEach((field) => {
+        nextItem[field] = localRecord[field];
+      });
+      return nextItem as T;
+    });
+
+  localItems.forEach((localItem) => {
+    if (
+      dirtyIds.has(localItem.id) &&
+      !deletedIds.has(localItem.id) &&
+      !remoteIds.has(localItem.id)
+    ) {
+      merged.push(localItem);
+    }
+  });
+
+  return merged;
+}
+
+function mergeRealtimeSession(
+  remote: NoriuchiSession,
+  local: NoriuchiSession,
+  dirtySessionFields: Set<SessionField>,
+  dirtyPlayIds: Set<string>,
+  dirtyPlayFields: DirtyFieldMap,
+  deletedPlayIds: Set<string>,
+  dirtyTransferIds: Set<string>,
+  dirtyTransferFields: DirtyFieldMap,
+  deletedTransferIds: Set<string>,
+  dirtyExchangeIds: Set<string>,
+  dirtyExchangeFields: DirtyFieldMap,
+  deletedExchangeIds: Set<string>,
+) {
+  return {
+    ...remote,
+    date: dirtySessionFields.has("date") ? local.date : remote.date,
+    hall: dirtySessionFields.has("hall") ? local.hall : remote.hall,
+    memo: dirtySessionFields.has("memo") ? local.memo : remote.memo,
+    plays: mergeRealtimeItems(
+      remote.plays,
+      local.plays,
+      dirtyPlayIds,
+      dirtyPlayFields,
+      deletedPlayIds,
+    ),
+    transfers: mergeRealtimeItems(
+      remote.transfers,
+      local.transfers,
+      dirtyTransferIds,
+      dirtyTransferFields,
+      deletedTransferIds,
+    ),
+    exchanges: mergeRealtimeItems(
+      remote.exchanges,
+      local.exchanges,
+      dirtyExchangeIds,
+      dirtyExchangeFields,
+      deletedExchangeIds,
+    ),
+  };
 }
 
 export default function Home() {
@@ -444,12 +525,24 @@ export default function Home() {
   );
   const [detailSessionId, setDetailSessionId] = useState<string | null>(null);
   const [dirtyPlayIds, setDirtyPlayIds] = useState<Set<string>>(new Set());
+  const [dirtyPlayFields, setDirtyPlayFields] = useState<DirtyFieldMap>(
+    new Map(),
+  );
   const [dirtyTransferIds, setDirtyTransferIds] = useState<Set<string>>(
     new Set(),
+  );
+  const [dirtyTransferFields, setDirtyTransferFields] = useState<DirtyFieldMap>(
+    new Map(),
   );
   const [dirtyExchangeIds, setDirtyExchangeIds] = useState<Set<string>>(
     new Set(),
   );
+  const [dirtyExchangeFields, setDirtyExchangeFields] = useState<DirtyFieldMap>(
+    new Map(),
+  );
+  const [dirtySessionFields, setDirtySessionFields] = useState<
+    Set<SessionField>
+  >(new Set());
   const [deletedPlayIds, setDeletedPlayIds] = useState<Set<string>>(new Set());
   const [deletedTransferIds, setDeletedTransferIds] = useState<Set<string>>(
     new Set(),
@@ -457,6 +550,43 @@ export default function Home() {
   const [deletedExchangeIds, setDeletedExchangeIds] = useState<Set<string>>(
     new Set(),
   );
+  const [realtimeStatus, setRealtimeStatus] = useState<
+    "connecting" | "connected" | "error"
+  >("connecting");
+  const [syncMessage, setSyncMessage] = useState("");
+
+  const liveEditRef = useRef({
+    page,
+    editingId,
+    forceSeparateSession,
+    form,
+    dirtySessionFields,
+    dirtyPlayIds,
+    dirtyPlayFields,
+    deletedPlayIds,
+    dirtyTransferIds,
+    dirtyTransferFields,
+    deletedTransferIds,
+    dirtyExchangeIds,
+    dirtyExchangeFields,
+    deletedExchangeIds,
+  });
+  liveEditRef.current = {
+    page,
+    editingId,
+    forceSeparateSession,
+    form,
+    dirtySessionFields,
+    dirtyPlayIds,
+    dirtyPlayFields,
+    deletedPlayIds,
+    dirtyTransferIds,
+    dirtyTransferFields,
+    deletedTransferIds,
+    dirtyExchangeIds,
+    dirtyExchangeFields,
+    deletedExchangeIds,
+  };
 
   useEffect(() => {
     const playId = pendingPlayScrollId.current;
@@ -472,6 +602,13 @@ export default function Home() {
 
     return () => cancelAnimationFrame(frameId);
   }, [form.plays.length]);
+
+  useEffect(() => {
+    if (!syncMessage) return;
+
+    const timeoutId = window.setTimeout(() => setSyncMessage(""), 3000);
+    return () => window.clearTimeout(timeoutId);
+  }, [syncMessage]);
 
   useEffect(() => {
     let active = true;
@@ -529,10 +666,47 @@ export default function Home() {
     const unsubscribe = subscribeToSessionChanges(() => {
       void fetchSessionsFromSupabase<NoriuchiSession>()
         .then((latest) => {
-          if (active) setSessions(latest);
+          if (!active) return;
+
+          setSessions(latest);
+
+          const snapshot = liveEditRef.current;
+          const remoteEditingSession = snapshot.editingId
+            ? latest.find((session) => session.id === snapshot.editingId)
+            : snapshot.page === "register" && !snapshot.forceSeparateSession
+              ? latest.find(
+                  (session) =>
+                    session.status === "draft" &&
+                    session.date === snapshot.form.date,
+                )
+              : undefined;
+
+          if (!remoteEditingSession) return;
+
+          if (!snapshot.editingId) {
+            setEditingId(remoteEditingSession.id);
+          }
+
+          setForm((current) =>
+            mergeRealtimeSession(
+              remoteEditingSession,
+              current,
+              snapshot.dirtySessionFields,
+              snapshot.dirtyPlayIds,
+              snapshot.dirtyPlayFields,
+              snapshot.deletedPlayIds,
+              snapshot.dirtyTransferIds,
+              snapshot.dirtyTransferFields,
+              snapshot.deletedTransferIds,
+              snapshot.dirtyExchangeIds,
+              snapshot.dirtyExchangeFields,
+              snapshot.deletedExchangeIds,
+            ),
+          );
+          setSyncMessage("ほかのメンバーの保存内容を反映しました");
         })
         .catch(console.error);
-    });
+    }, setRealtimeStatus);
 
     return () => {
       active = false;
@@ -643,12 +817,35 @@ export default function Home() {
   }).sort((a, b) => b.rankingValue - a.rankingValue);
 
   function resetChangeTracking() {
+    setDirtySessionFields(new Set());
     setDirtyPlayIds(new Set());
+    setDirtyPlayFields(new Map());
     setDirtyTransferIds(new Set());
+    setDirtyTransferFields(new Map());
     setDirtyExchangeIds(new Set());
+    setDirtyExchangeFields(new Map());
     setDeletedPlayIds(new Set());
     setDeletedTransferIds(new Set());
     setDeletedExchangeIds(new Set());
+  }
+
+  function markDirtyField(
+    setter: React.Dispatch<React.SetStateAction<DirtyFieldMap>>,
+    id: string,
+    field: string,
+  ) {
+    setter((current) => {
+      const next = new Map(current);
+      const fields = new Set(next.get(id) ?? []);
+      fields.add(field);
+      next.set(id, fields);
+      return next;
+    });
+  }
+
+  function updateSessionField(field: SessionField, value: string) {
+    setDirtySessionFields((current) => new Set(current).add(field));
+    setForm((current) => ({ ...current, [field]: value }));
   }
 
   function createNewSession() {
@@ -797,6 +994,7 @@ export default function Home() {
     value: string | number | boolean,
   ) {
     setDirtyPlayIds((current) => new Set(current).add(id));
+    markDirtyField(setDirtyPlayFields, id, field);
     setForm((current) => ({
       ...current,
       plays: current.plays.map((play) =>
@@ -809,6 +1007,7 @@ export default function Home() {
     const id = newId();
     pendingPlayScrollId.current = id;
     setDirtyPlayIds((current) => new Set(current).add(id));
+    markDirtyField(setDirtyPlayFields, id, "*");
     setForm((current) => ({
       ...current,
       plays: [
@@ -834,6 +1033,11 @@ export default function Home() {
       next.delete(id);
       return next;
     });
+    setDirtyPlayFields((current) => {
+      const next = new Map(current);
+      next.delete(id);
+      return next;
+    });
     setDeletedPlayIds((current) => new Set(current).add(id));
     setForm((current) => ({
       ...current,
@@ -844,6 +1048,7 @@ export default function Home() {
   function addTransfer(type: PlayType) {
     const id = newId();
     setDirtyTransferIds((current) => new Set(current).add(id));
+    markDirtyField(setDirtyTransferFields, id, "*");
     setForm((current) => ({
       ...current,
       transfers: [
@@ -865,6 +1070,7 @@ export default function Home() {
     value: string | number,
   ) {
     setDirtyTransferIds((current) => new Set(current).add(id));
+    markDirtyField(setDirtyTransferFields, id, field);
     setForm((current) => ({
       ...current,
       transfers: current.transfers.map((transfer) =>
@@ -879,6 +1085,11 @@ export default function Home() {
       next.delete(id);
       return next;
     });
+    setDirtyTransferFields((current) => {
+      const next = new Map(current);
+      next.delete(id);
+      return next;
+    });
     setDeletedTransferIds((current) => new Set(current).add(id));
     setForm((current) => ({
       ...current,
@@ -889,6 +1100,7 @@ export default function Home() {
   function addExchange(type: PlayType) {
     const id = newId();
     setDirtyExchangeIds((current) => new Set(current).add(id));
+    markDirtyField(setDirtyExchangeFields, id, "*");
     setForm((current) => ({
       ...current,
       exchanges: [
@@ -911,6 +1123,7 @@ export default function Home() {
     value: string | number,
   ) {
     setDirtyExchangeIds((current) => new Set(current).add(id));
+    markDirtyField(setDirtyExchangeFields, id, field);
     setForm((current) => ({
       ...current,
       exchanges: current.exchanges.map((exchange) =>
@@ -921,6 +1134,7 @@ export default function Home() {
 
   function toggleExchangeMember(id: string, member: MemberName) {
     setDirtyExchangeIds((current) => new Set(current).add(id));
+    markDirtyField(setDirtyExchangeFields, id, "members");
     setForm((current) => ({
       ...current,
       exchanges: current.exchanges.map((exchange) => {
@@ -940,6 +1154,11 @@ export default function Home() {
   function removeExchange(id: string) {
     setDirtyExchangeIds((current) => {
       const next = new Set(current);
+      next.delete(id);
+      return next;
+    });
+    setDirtyExchangeFields((current) => {
+      const next = new Map(current);
       next.delete(id);
       return next;
     });
@@ -967,8 +1186,29 @@ export default function Home() {
             <p className="mt-1 text-sm text-zinc-400">
               3人専用 ノリ打ち精算・収支管理
             </p>
+            <p
+              className={`mt-2 text-xs font-bold ${
+                realtimeStatus === "connected"
+                  ? "text-emerald-400"
+                  : realtimeStatus === "error"
+                    ? "text-rose-400"
+                    : "text-zinc-500"
+              }`}
+            >
+              {realtimeStatus === "connected"
+                ? "● リアルタイム同期 接続済み"
+                : realtimeStatus === "error"
+                  ? "● 同期エラー"
+                  : "● 同期に接続中"}
+            </p>
           </button>
         </header>
+
+        {syncMessage && (
+          <div className="fixed left-1/2 top-4 z-50 w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 rounded-2xl bg-emerald-500 px-4 py-3 text-center text-sm font-black text-black shadow-xl">
+            {syncMessage}
+          </div>
+        )}
 
         {page === "home" && (
           <section className="space-y-4">
@@ -1093,17 +1333,13 @@ export default function Home() {
                 label="日付"
                 type="date"
                 value={form.date}
-                onChange={(value) =>
-                  setForm((current) => ({ ...current, date: value }))
-                }
+                onChange={(value) => updateSessionField("date", value)}
               />
               <Input
                 label="ホール"
                 value={form.hall}
                 placeholder="例：マルハン○○店"
-                onChange={(value) =>
-                  setForm((current) => ({ ...current, hall: value }))
-                }
+                onChange={(value) => updateSessionField("hall", value)}
               />
             </Card>
 
@@ -1407,6 +1643,7 @@ export default function Home() {
                           label={`交換した${unitLabel(exchange.type)}数`}
                           value={exchange.units}
                           suffix={unitLabel(exchange.type)}
+                          showZero
                           onChange={(value) =>
                             updateExchange(exchange.id, "units", value)
                           }
@@ -1415,6 +1652,7 @@ export default function Home() {
                           label="交換金額"
                           value={exchange.yen}
                           suffix="円"
+                          showZero
                           onChange={(value) =>
                             updateExchange(exchange.id, "yen", value)
                           }
@@ -1442,10 +1680,7 @@ export default function Home() {
                 <textarea
                   value={form.memo}
                   onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      memo: event.target.value,
-                    }))
+                    updateSessionField("memo", event.target.value)
                   }
                   placeholder="今日の出来事、設定示唆など"
                   rows={3}
@@ -2277,11 +2512,13 @@ function NumberInput({
   value,
   onChange,
   suffix,
+  showZero = false,
 }: {
   label: string;
   value: number;
   onChange: (value: number) => void;
   suffix: string;
+  showZero?: boolean;
 }) {
   return (
     <label className="block">
@@ -2291,7 +2528,7 @@ function NumberInput({
           type="number"
           min="0"
           inputMode="numeric"
-          value={value || ""}
+          value={showZero || value !== 0 ? value : ""}
           placeholder="0"
           onChange={(event) => onChange(Number(event.target.value))}
           className="min-w-0 flex-1 rounded-xl border border-zinc-700 bg-zinc-950 p-3 outline-none focus:border-amber-400"
