@@ -1,5 +1,7 @@
 "use client";
 
+// 最新版 2026-08-05：ランキング分離・ホール別分析・ホール候補検索対応
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   deleteSessionFromSupabase,
@@ -8,6 +10,7 @@ import {
   saveSessionToSupabase,
   subscribeToSessionChanges,
 } from "@/lib/sessionApi";
+import { FUKUOKA_HALLS } from "@/lib/fukuokaHalls";
 
 const MEMBERS = ["すぎさん", "こうちさん", "こんちゃみ"] as const;
 type MemberName = (typeof MEMBERS)[number];
@@ -17,6 +20,7 @@ type PageName =
   | "drafts"
   | "history"
   | "detail"
+  | "ranking"
   | "analysis";
 type SessionStatus = "draft" | "confirmed";
 type PlayType = "slot" | "pachinko";
@@ -172,6 +176,34 @@ function compactSignedYen(value: number) {
   }
 
   return `${sign}${absolute.toLocaleString()}`;
+}
+
+function normalizeHallSearch(value: string) {
+  return value
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/メガフェイス/g, "megaface")
+    .replace(/フェイス/g, "face")
+    .replace(/スーパー[\s　]*ディーステーション/g, "superdstation")
+    .replace(/ディーステーション/g, "dstation")
+    .replace(/クィ/g, "クイ")
+    .replace(/[’'`・･.\s　\-_☆]/g, "")
+    .replace(/店$/, "");
+}
+
+const HALL_MASTER_BY_KEY = new Map(
+  FUKUOKA_HALLS.flatMap((hall) =>
+    [hall.name, ...(hall.aliases ?? [])].map(
+      (name) => [normalizeHallSearch(name), hall] as const,
+    ),
+  ),
+);
+
+function canonicalHallName(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return "ホール未入力";
+
+  return HALL_MASTER_BY_KEY.get(normalizeHallSearch(trimmed))?.name ?? trimmed;
 }
 
 function createEmptySession(): NoriuchiSession {
@@ -551,6 +583,7 @@ export default function Home() {
   const [syncMessage, setSyncMessage] = useState("");
   const [draftMergeIds, setDraftMergeIds] = useState<string[]>([]);
   const [isMergingDrafts, setIsMergingDrafts] = useState(false);
+  const [hallSuggestionsOpen, setHallSuggestionsOpen] = useState(false);
 
   const liveEditRef = useRef({
     page,
@@ -769,6 +802,66 @@ export default function Home() {
   );
   const draftCount = draftSessions.length;
 
+  const hallCandidates = useMemo(() => {
+    const candidates = new Map<
+      string,
+      {
+        name: string;
+        area: string;
+        aliases?: string[];
+        source: "履歴" | "福岡県";
+      }
+    >();
+
+    sessions.forEach((session) => {
+      const name = session.hall.trim();
+      if (!name) return;
+
+      const key = normalizeHallSearch(name);
+      const master = HALL_MASTER_BY_KEY.get(key);
+      candidates.set(key, {
+        name: master?.name ?? name,
+        area: master?.area ?? "過去の入力",
+        aliases: master?.aliases,
+        source: "履歴",
+      });
+    });
+
+    FUKUOKA_HALLS.forEach((hall) => {
+      const key = normalizeHallSearch(hall.name);
+      if (candidates.has(key)) return;
+
+      candidates.set(key, { ...hall, source: "福岡県" });
+    });
+
+    return [...candidates.values()];
+  }, [sessions]);
+
+  const hallSuggestions = useMemo(() => {
+    if (!hallSuggestionsOpen) return [];
+
+    const query = normalizeHallSearch(form.hall);
+    if (!query) return [];
+
+    return hallCandidates
+      .filter((hall) => {
+        const name = normalizeHallSearch(hall.name);
+        const area = normalizeHallSearch(hall.area);
+        const aliasMatches = hall.aliases?.some((alias) =>
+          normalizeHallSearch(alias).includes(query),
+        );
+        return (
+          name !== query &&
+          (name.includes(query) || area.includes(query) || aliasMatches)
+        );
+      })
+      .sort((a, b) => {
+        if (a.source !== b.source) return a.source === "履歴" ? -1 : 1;
+        return a.name.localeCompare(b.name, "ja");
+      })
+      .slice(0, 8);
+  }, [form.hall, hallCandidates, hallSuggestionsOpen]);
+
   const analysisSessions = confirmedSessions.filter((session) =>
     analysisPeriod === "month"
       ? session.date.startsWith(analysisMonth)
@@ -826,6 +919,66 @@ export default function Home() {
       receivedBalls,
     };
   }).sort((a, b) => b.rankingValue - a.rankingValue);
+
+  const hallAnalysis = Array.from(
+    analysisSessions
+      .reduce(
+        (map, session) => {
+          const result = calculateSession(session);
+          const name = canonicalHallName(session.hall);
+          const key = normalizeHallSearch(name) || "__empty__";
+          const current = map.get(key) ?? {
+            name,
+            visits: 0,
+            wins: 0,
+            losses: 0,
+            draws: 0,
+            totalInvestment: 0,
+            totalExchange: 0,
+            totalProfit: 0,
+            bestProfit: Number.NEGATIVE_INFINITY,
+            worstProfit: Number.POSITIVE_INFINITY,
+          };
+
+          current.visits += 1;
+          current.totalInvestment += result.totalInvestment;
+          current.totalExchange += result.totalExchangeYen;
+          current.totalProfit += result.totalProfit;
+          current.bestProfit = Math.max(current.bestProfit, result.totalProfit);
+          current.worstProfit = Math.min(
+            current.worstProfit,
+            result.totalProfit,
+          );
+
+          if (result.totalProfit > 0) current.wins += 1;
+          else if (result.totalProfit < 0) current.losses += 1;
+          else current.draws += 1;
+
+          map.set(key, current);
+          return map;
+        },
+        new Map<
+          string,
+          {
+            name: string;
+            visits: number;
+            wins: number;
+            losses: number;
+            draws: number;
+            totalInvestment: number;
+            totalExchange: number;
+            totalProfit: number;
+            bestProfit: number;
+            worstProfit: number;
+          }
+        >(),
+      )
+      .values(),
+  ).sort((a, b) => {
+    if (a.name === "ホール未入力") return 1;
+    if (b.name === "ホール未入力") return -1;
+    return b.totalProfit - a.totalProfit;
+  });
 
   function resetChangeTracking() {
     setDirtySessionFields(new Set());
@@ -1462,12 +1615,66 @@ export default function Home() {
                 value={form.date}
                 onChange={(value) => updateSessionField("date", value)}
               />
-              <Input
-                label="ホール"
-                value={form.hall}
-                placeholder="例：マルハン○○店"
-                onChange={(value) => updateSessionField("hall", value)}
-              />
+              <div className="relative">
+                <label className="block">
+                  <span className="mb-2 block text-sm text-zinc-400">
+                    ホール
+                  </span>
+                  <input
+                    type="text"
+                    value={form.hall}
+                    placeholder="例：フェイス"
+                    autoComplete="off"
+                    onFocus={() => setHallSuggestionsOpen(true)}
+                    onChange={(event) => {
+                      updateSessionField("hall", event.target.value);
+                      setHallSuggestionsOpen(true);
+                    }}
+                    onBlur={() => {
+                      window.setTimeout(
+                        () => setHallSuggestionsOpen(false),
+                        150,
+                      );
+                    }}
+                    className="w-full rounded-xl border border-zinc-700 bg-zinc-950 p-3 outline-none focus:border-amber-400"
+                  />
+                </label>
+
+                {hallSuggestions.length > 0 && (
+                  <div className="absolute inset-x-0 top-full z-30 mt-2 max-h-72 overflow-y-auto rounded-2xl border border-zinc-700 bg-zinc-950 p-2 shadow-2xl">
+                    {hallSuggestions.map((hall) => (
+                      <button
+                        key={`${hall.name}-${hall.area}`}
+                        type="button"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => {
+                          updateSessionField("hall", hall.name);
+                          setHallSuggestionsOpen(false);
+                        }}
+                        className="flex w-full items-center justify-between gap-3 rounded-xl px-3 py-3 text-left hover:bg-zinc-800"
+                      >
+                        <span className="min-w-0">
+                          <span className="block truncate font-bold">
+                            {hall.name}
+                          </span>
+                          <span className="mt-1 block text-xs text-zinc-500">
+                            {hall.area}
+                          </span>
+                        </span>
+                        {hall.source === "履歴" && (
+                          <span className="shrink-0 rounded-full bg-amber-400/10 px-2 py-1 text-[10px] font-bold text-amber-300">
+                            履歴
+                          </span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <p className="mt-2 text-xs text-zinc-500">
+                  1文字以上入力すると福岡県内の候補が表示されます
+                </p>
+              </div>
             </Card>
 
             <Card>
@@ -2465,12 +2672,12 @@ export default function Home() {
           </section>
         )}
 
-        {page === "analysis" && (
+        {page === "ranking" && (
           <section className="space-y-5">
             <div>
-              <h2 className="text-2xl font-black">ランキング・分析</h2>
+              <h2 className="text-2xl font-black">ランキング</h2>
               <p className="mt-1 text-sm text-zinc-400">
-                月間・年間の確定済み記録を振り返れます
+                実質差枚・差玉でメンバーを比較します
               </p>
             </div>
 
@@ -2606,10 +2813,169 @@ export default function Home() {
             )}
           </section>
         )}
+
+        {page === "analysis" && (
+          <section className="space-y-5">
+            <div>
+              <h2 className="text-2xl font-black">ホール別分析</h2>
+              <p className="mt-1 text-sm text-zinc-400">
+                確定済み記録からホールごとの成績を振り返れます
+              </p>
+            </div>
+
+            <div className="rounded-3xl border border-zinc-800 bg-zinc-900 p-5">
+              <div className="grid grid-cols-2 gap-2 rounded-2xl bg-zinc-950 p-1">
+                <button
+                  type="button"
+                  onClick={() => setAnalysisPeriod("month")}
+                  className={`rounded-xl py-3 font-black ${
+                    analysisPeriod === "month"
+                      ? "bg-amber-400 text-black"
+                      : "text-zinc-400"
+                  }`}
+                >
+                  月間
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAnalysisPeriod("year");
+                    setAnalysisYear(analysisMonth.slice(0, 4));
+                  }}
+                  className={`rounded-xl py-3 font-black ${
+                    analysisPeriod === "year"
+                      ? "bg-amber-400 text-black"
+                      : "text-zinc-400"
+                  }`}
+                >
+                  年間
+                </button>
+              </div>
+
+              <div className="mt-4 flex items-center justify-between">
+                <button
+                  type="button"
+                  aria-label={analysisPeriod === "month" ? "前の月" : "前年"}
+                  onClick={() => {
+                    if (analysisPeriod === "month") {
+                      setAnalysisMonth((current) => shiftMonth(current, -1));
+                    } else {
+                      setAnalysisYear((current) => String(Number(current) - 1));
+                    }
+                  }}
+                  className="rounded-xl bg-zinc-800 px-4 py-2 text-xl font-black"
+                >
+                  ‹
+                </button>
+                <p className="text-lg font-black">{analysisPeriodLabel}</p>
+                <button
+                  type="button"
+                  aria-label={analysisPeriod === "month" ? "次の月" : "翌年"}
+                  onClick={() => {
+                    if (analysisPeriod === "month") {
+                      setAnalysisMonth((current) => shiftMonth(current, 1));
+                    } else {
+                      setAnalysisYear((current) => String(Number(current) + 1));
+                    }
+                  }}
+                  className="rounded-xl bg-zinc-800 px-4 py-2 text-xl font-black"
+                >
+                  ›
+                </button>
+              </div>
+
+              <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                <Stat label="確定済み" value={`${analysisSessions.length}件`} />
+                <Stat label="全体収支" value={signedYen(analysisProfit)} />
+                <Stat label="遊技ホール" value={`${hallAnalysis.length}店`} />
+                <Stat
+                  label="1回平均"
+                  value={signedYen(
+                    analysisSessions.length > 0
+                      ? analysisProfit / analysisSessions.length
+                      : 0,
+                  )}
+                />
+              </div>
+            </div>
+
+            {hallAnalysis.length === 0 ? (
+              <EmptyState
+                text={`${analysisPeriodLabel}の確定済み記録はありません`}
+              />
+            ) : (
+              <div className="space-y-4">
+                {hallAnalysis.map((hall, index) => {
+                  const averageProfit = hall.totalProfit / hall.visits;
+                  const winRate = Math.round((hall.wins / hall.visits) * 100);
+
+                  return (
+                    <div
+                      key={normalizeHallSearch(hall.name) || hall.name}
+                      className={`rounded-3xl border p-5 ${
+                        index === 0 && hall.totalProfit > 0
+                          ? "border-emerald-500/40 bg-emerald-400/10"
+                          : "border-zinc-800 bg-zinc-900"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-zinc-500">
+                            収支順 {index + 1}位
+                          </p>
+                          <h3 className="mt-1 break-words text-xl font-black">
+                            {hall.name}
+                          </h3>
+                          <p className="mt-1 text-sm text-zinc-400">
+                            {hall.visits}回・{hall.wins}勝{hall.losses}敗
+                            {hall.draws > 0 ? `${hall.draws}分` : ""}
+                          </p>
+                        </div>
+                        <p
+                          className={`shrink-0 text-lg font-black ${
+                            hall.totalProfit >= 0
+                              ? "text-emerald-400"
+                              : "text-rose-400"
+                          }`}
+                        >
+                          {signedYen(hall.totalProfit)}
+                        </p>
+                      </div>
+
+                      <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                        <Stat label="勝率" value={`${winRate}%`} />
+                        <Stat
+                          label="1回平均"
+                          value={signedYen(averageProfit)}
+                        />
+                        <Stat
+                          label="総投資"
+                          value={yen(hall.totalInvestment)}
+                        />
+                        <Stat
+                          label="総交換金額"
+                          value={yen(hall.totalExchange)}
+                        />
+                        <Stat
+                          label="最高収支"
+                          value={signedYen(hall.bestProfit)}
+                        />
+                        <Stat
+                          label="最低収支"
+                          value={signedYen(hall.worstProfit)}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        )}
       </div>
 
       <nav className="fixed inset-x-0 bottom-0 border-t border-zinc-800 bg-zinc-950/95 backdrop-blur">
-        <div className="mx-auto grid max-w-md grid-cols-4">
+        <div className="mx-auto grid max-w-md grid-cols-5">
           <NavButton
             active={page === "home" || page === "drafts"}
             label="ホーム"
@@ -2623,15 +2989,21 @@ export default function Home() {
             onClick={startNew}
           />
           <NavButton
-            active={page === "history"}
+            active={page === "history" || page === "detail"}
             label="履歴"
             icon="📖"
             onClick={() => setPage("history")}
           />
           <NavButton
+            active={page === "ranking"}
+            label="ランキング"
+            icon="🏆"
+            onClick={() => setPage("ranking")}
+          />
+          <NavButton
             active={page === "analysis"}
             label="分析"
-            icon="🏆"
+            icon="📊"
             onClick={() => setPage("analysis")}
           />
         </div>
