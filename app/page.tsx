@@ -370,12 +370,11 @@ function calculateSession(session: NoriuchiSession) {
   );
 
   const totalProfit = totalExchangeYen - totalInvestment;
-  const rawEqualProfit = totalProfit / MEMBERS.length;
-  const equalProfit = Math.trunc(rawEqualProfit / 1000) * 1000;
+  const equalProfit = Math.trunc(totalProfit / MEMBERS.length / 1000) * 1000;
 
   const memberResults = MEMBERS.map((member) => {
     const investment = memberInvestment(session, member);
-    const rawReceipt = investment + rawEqualProfit;
+    const rawReceipt = investment + equalProfit;
     const receipt = Math.trunc(rawReceipt / 1000) * 1000;
     const personalProfit = memberPersonalProfit(session, member);
 
@@ -394,17 +393,12 @@ function calculateSession(session: NoriuchiSession) {
     };
   });
 
-  const distributedTotal = memberResults.reduce(
-    (sum, result) => sum + result.receipt,
-    0,
-  );
-
   return {
     totalInvestment,
     totalExchangeYen,
     totalProfit,
     equalProfit,
-    remainder: totalExchangeYen - distributedTotal,
+    remainder: totalProfit - equalProfit * MEMBERS.length,
     memberResults,
   };
 }
