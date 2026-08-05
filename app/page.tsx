@@ -1,6 +1,6 @@
 "use client";
 
-// 最新版 2026-08-05：ランキング分離・ホール別分析・ホール候補検索対応
+// 最新版 2026-08-05 v2：マイナス割り勘・交換金額初期空欄・ホール4位以降展開対応
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -52,6 +52,7 @@ type ExchangeEntry = {
   type: PlayType;
   units: number;
   yen: number;
+  yenEntered?: boolean;
   memo: string;
 };
 
@@ -403,7 +404,10 @@ function calculateSession(session: NoriuchiSession) {
   );
 
   const totalProfit = totalExchangeYen - totalInvestment;
-  const equalProfit = Math.trunc(totalProfit / MEMBERS.length / 1000) * 1000;
+  const equalProfit =
+    totalProfit >= 0
+      ? Math.trunc(totalProfit / MEMBERS.length / 1000) * 1000
+      : Math.floor(totalProfit / MEMBERS.length / 1000) * 1000;
 
   const memberResults = MEMBERS.map((member) => {
     const investment = memberInvestment(session, member);
@@ -584,6 +588,7 @@ export default function Home() {
   const [draftMergeIds, setDraftMergeIds] = useState<string[]>([]);
   const [isMergingDrafts, setIsMergingDrafts] = useState(false);
   const [hallSuggestionsOpen, setHallSuggestionsOpen] = useState(false);
+  const [expandedHallKey, setExpandedHallKey] = useState<string | null>(null);
 
   const liveEditRef = useRef({
     page,
@@ -1340,6 +1345,7 @@ export default function Home() {
           type,
           units: 0,
           yen: 0,
+          yenEntered: false,
           memo: "",
         },
       ],
@@ -1356,7 +1362,13 @@ export default function Home() {
     setForm((current) => ({
       ...current,
       exchanges: current.exchanges.map((exchange) =>
-        exchange.id === id ? { ...exchange, [field]: value } : exchange,
+        exchange.id === id
+          ? {
+              ...exchange,
+              [field]: value,
+              ...(field === "yen" ? { yenEntered: true } : {}),
+            }
+          : exchange,
       ),
     }));
   }
@@ -1986,7 +1998,7 @@ export default function Home() {
                           label="交換金額"
                           value={exchange.yen}
                           suffix="円"
-                          showZero
+                          showZero={exchange.yenEntered !== false}
                           onChange={(value) =>
                             updateExchange(exchange.id, "yen", value)
                           }
@@ -2905,7 +2917,7 @@ export default function Home() {
               />
             ) : (
               <div className="space-y-4">
-                {hallAnalysis.map((hall, index) => {
+                {hallAnalysis.slice(0, 3).map((hall, index) => {
                   const averageProfit = hall.totalProfit / hall.visits;
                   const winRate = Math.round((hall.wins / hall.visits) * 100);
 
@@ -2968,6 +2980,98 @@ export default function Home() {
                     </div>
                   );
                 })}
+
+                {hallAnalysis.length > 3 && (
+                  <div className="overflow-hidden rounded-3xl border border-zinc-800 bg-zinc-900">
+                    <div className="border-b border-zinc-800 px-5 py-4">
+                      <h3 className="font-black">4位以降のホール</h3>
+                      <p className="mt-1 text-xs text-zinc-500">
+                        ホール名をタップすると詳細を確認できます
+                      </p>
+                    </div>
+
+                    {hallAnalysis.slice(3).map((hall, index) => {
+                      const rank = index + 4;
+                      const hallKey =
+                        normalizeHallSearch(hall.name) || hall.name;
+                      const expanded = expandedHallKey === hallKey;
+                      const averageProfit = hall.totalProfit / hall.visits;
+                      const winRate = Math.round(
+                        (hall.wins / hall.visits) * 100,
+                      );
+
+                      return (
+                        <div
+                          key={hallKey}
+                          className="border-b border-zinc-800 last:border-b-0"
+                        >
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setExpandedHallKey(expanded ? null : hallKey)
+                            }
+                            className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left"
+                          >
+                            <span className="min-w-0">
+                              <span className="text-xs font-bold text-zinc-500">
+                                {rank}位
+                              </span>
+                              <span className="mt-1 block break-words font-black">
+                                {hall.name}
+                              </span>
+                            </span>
+                            <span className="flex shrink-0 items-center gap-3">
+                              <span
+                                className={`font-black ${
+                                  hall.totalProfit >= 0
+                                    ? "text-emerald-400"
+                                    : "text-rose-400"
+                                }`}
+                              >
+                                {signedYen(hall.totalProfit)}
+                              </span>
+                              <span className="text-zinc-500">
+                                {expanded ? "▲" : "▼"}
+                              </span>
+                            </span>
+                          </button>
+
+                          {expanded && (
+                            <div className="border-t border-zinc-800 px-5 pb-5 pt-4">
+                              <p className="mb-4 text-sm text-zinc-400">
+                                {hall.visits}回・{hall.wins}勝{hall.losses}敗
+                                {hall.draws > 0 ? `${hall.draws}分` : ""}
+                              </p>
+                              <div className="grid grid-cols-2 gap-3 text-sm">
+                                <Stat label="勝率" value={`${winRate}%`} />
+                                <Stat
+                                  label="1回平均"
+                                  value={signedYen(averageProfit)}
+                                />
+                                <Stat
+                                  label="総投資"
+                                  value={yen(hall.totalInvestment)}
+                                />
+                                <Stat
+                                  label="総交換金額"
+                                  value={yen(hall.totalExchange)}
+                                />
+                                <Stat
+                                  label="最高収支"
+                                  value={signedYen(hall.bestProfit)}
+                                />
+                                <Stat
+                                  label="最低収支"
+                                  value={signedYen(hall.worstProfit)}
+                                />
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
           </section>
